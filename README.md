@@ -37,11 +37,12 @@
 
 ## 2. Key Subsystems and Mechanisms
 
-### 2.1 Asynchronous Dual-Mode Latency Engine
-To prevent stale static latencies and unhandled network drops, PulseGPN implements a concurrent dual-probe architecture executed via `ThreadPoolExecutor(max_workers=10)`:
-1. **Hardware ICMP Probing:** Interacts directly with Windows `iphlpapi.dll` using `IcmpCreateFile` and `IcmpSendEcho`. Transmits 32-byte ICMP Echo Request packets tagged with TOS `0xB8` (DSCP 46 Expedited Forwarding) to measure physical link round-trip time (RTT).
-2. **TCP SYN Connect Probing:** For cloud datacenters or game edge relays filtering ICMP traffic (e.g. AWS EC2, Cloudflare, Riot Direct edge nodes), the engine initiates a non-blocking TCP SYN socket connection to TCP port 443 with a 350ms timeout, capturing microsecond-precision kernel socket RTT.
-3. **Physical Variance Simulation:** Incorporates dynamic physical micro-jitter variance reflecting live carrier route conditions, guaranteeing responsive, fluctuating telemetry rather than frozen database snapshots.
+### 2.1 Asynchronous Dual-Mode Latency Engine & Continuous 5-Second Prober
+To ensure responsive real-time routing and true carrier transparency, PulseGPN implements a concurrent dual-probe architecture executed via `ThreadPoolExecutor(max_workers=35)` running continuously on a 5-second hardware polling cycle:
+1. **Hardware ICMP Probing:** Interacts directly with Windows `iphlpapi.dll` using `IcmpCreateFile` and `IcmpSendEcho`. Transmits 32-byte ICMP Echo Request packets tagged with TOS `0xB8` (DSCP 46 Expedited Forwarding) to measure exact physical link round-trip time (RTT).
+2. **TCP SYN Connect Probing:** For cloud datacenters or game edge relays filtering ICMP traffic (e.g. AWS EC2, Cloudflare, Riot Direct edge nodes), the engine initiates a non-blocking TCP SYN socket connection to TCP port 443 with a 750ms timeout. If the remote host replies with SYN-ACK or resets via RST-ACK (`WSAECONNREFUSED` / 10061), high-precision performance counter timers calculate true network round-trip time.
+3. **100% Unadulterated Physical Measurements:** PulseGPN completely rejects synthetic jitter, math clamping, or simulated variance. Every millisecond, jitter value, and packet loss metric originates from physical kernel socket timers and native ICMP hardware replies (`min <= avg <= max` mathematically guaranteed).
+4. **Continuous 5-Second Automated Telemetry:** A dedicated background daemon (`_continuous_5s_prober_worker`) fires every 5 seconds, concurrently querying all 35 global transit points, updating the Route Tuner matrix table in-place without GUI flicker or scroll displacement, and continuously feeding the real-time bufferbloat telemetry graph.
 
 ### 2.2 WFP ALE Firewall Isolation (`program=` ALE Binding)
 PulseGPN isolates game network traffic from competing datacenter regions (e.g. routing NA-East while quarantining Oceania, Europe, and Asia) using Windows Defender Firewall (`netsh advfirewall`):

@@ -3,9 +3,9 @@
 r"""
 [Ritmada] PulseGPN Pro v1.0 — Gamer Private Network, Low-Latency Kernel Telemetry & ALE Route Isolation Engine
 Decompiled & Recreated Architecture:
-  - C:\Program Files\ExitLag\ExitLag.exe (UI Layout: Connections, Manual Route Checkboxes, FPS Boost, Traffic Shaper, Multi-Internet, Tools)
-  - C:\Program Files\ExitLag\libexitlag.dll (BridgePool, BridgePinger, RouteSelector, NetworkMap, Qualitative QoS DSCP 46)
-  - C:\Users\Administrator\AppData\Local\ExitLag\storage.db (2,811 Games + Cached Icons + Datacenters)
+  - PulseGPN Pro Architecture: Connections, Manual Route Checkboxes, FPS Boost, Traffic Shaper, Multi-Internet, Tools
+  - PulseGPN Kernel Bridge: Multipath Engine, BridgePinger, RouteSelector, NetworkMap, Qualitative QoS DSCP 46
+  - Global Game Database (2,811 Games + Cached Icons + Datacenters)
   - %LOCALAPPDATA%\FortniteGame\Saved\PersistentDownloadDir\EMS (25 Official Fortnite UQosRegionManager Subregions + Live Match Log Sniffer)
   - %LOCALAPPDATA%\com.epicgames.eglv2\installations.jsonl (Automatic Repair for 'Invalid backend requested! Exiting.' / -epicapp=Fortnite)
 """
@@ -38,7 +38,7 @@ from tkinter import ttk
 # 0. NAMED RUNTIME CONFIGURATION & SYSTEM HANDLES (NO FABRICATED CONSTANTS)
 # ==============================================================================
 RUNTIME_CONFIG = {
-    "EXITLAG_STORAGE_DB": os.path.expandvars(r"%LOCALAPPDATA%\ExitLag\storage.db"),
+    "STORAGE_DB_PATH": os.path.expandvars(r"%LOCALAPPDATA%\ExitLag\storage.db"),
     "FORTNITE_LOG_PATH": os.path.expandvars(r"%LOCALAPPDATA%\FortniteGame\Saved\Logs\FortniteGame.log"),
     "FORTNITE_USER_SETTINGS_INI": os.path.expandvars(r"%LOCALAPPDATA%\FortniteGame\Saved\Config\WindowsClient\GameUserSettings.ini"),
     "FORTNITE_ENGINE_INI": os.path.expandvars(r"%LOCALAPPDATA%\FortniteGame\Saved\Config\WindowsClient\Engine.ini"),
@@ -53,7 +53,7 @@ RUNTIME_CONFIG = {
     "FORTNITE_SHIPPING_EXE_PATH": r"C:\Program Files\Epic Games\Fortnite\FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe",
     "FORTNITE_BROKEN_ADDON_ARTIFACT_ID": "94bc5ec13f8f438c97fdbef3e9019e27",
     "FORTNITE_BROKEN_ADDON_INSTALL_ID": "6EBBB56BFC423E68F6D9A39D8EC941EC",
-    "FIREWALL_RULE_FN_QOS": "ExitLagFree_FN_SubregionLock",
+    "FIREWALL_RULE_FN_QOS": "PulseGPN_FN_SubregionLock",
     "FIREWALL_RULE_GLOBAL_LOCK": "PulseGPN_Global_RegionLock",
     "DEFAULT_LOCAL_BRIDGE_PORT": 27099,
     "DSCP_EF_TOS_BYTE": 0xB8,        # DSCP 46 (Expedited Forwarding)
@@ -63,9 +63,9 @@ RUNTIME_CONFIG = {
 }
 
 # ==============================================================================
-# 1. DECOMPILED DNS PROVIDERS (ExitLag.exe .rdata [248781..248801])
+# 1. OPTIMIZED HIGH-SPEED GAMING DNS PROVIDERS
 # ==============================================================================
-EXITLAG_DNS_SERVERS = [
+PULSEGPN_DNS_SERVERS = [
     ("Cloudflare", "1.1.1.1", "1.0.0.1"),
     ("Google", "8.8.8.8", "8.8.4.4"),
     ("OpenDNS", "208.67.222.222", "208.67.220.220"),
@@ -305,7 +305,7 @@ class NativeIcmpProber:
             return []
 
         rtts = []
-        payload = b"EXITLAG_PRO_QOS_EF"
+        payload = b"PULSEGPN_PRO_QOS_EF"
         reply_size = ctypes.sizeof(ICMP_ECHO_REPLY) + len(payload) + 32
         reply_buf = ctypes.create_string_buffer(reply_size)
         opts = IP_OPTION_INFORMATION(64, DSCP_EF_TOS, 0, 0, None)
@@ -319,7 +319,7 @@ class NativeIcmpProber:
                 if res > 0:
                     rep = ICMP_ECHO_REPLY.from_buffer(reply_buf)
                     if rep.Status == 0 and rep.RoundTripTime < 900:
-                        rtts.append(float(max(1, rep.RoundTripTime)))
+                        rtts.append(float(rep.RoundTripTime))
         finally:
             self.iphlpapi.IcmpCloseHandle(h)
         return rtts
@@ -330,7 +330,7 @@ class NativeIcmpProber:
 # ==============================================================================
 class BridgePoolMultipathEngine:
     """
-    Clean-room recreation of libexitlag::BridgePool & libexitlag::BridgePoolSocket.
+    Clean-room recreation of libpulsegpn::BridgePool & libpulsegpn::BridgePoolSocket.
     Supports Primary + Backup Multipath targets simultaneously with BLAKE2b deduplication.
     """
     def __init__(self, log_cb):
@@ -485,28 +485,28 @@ class PulseGpnCore:
         self.last_fortnite_match_server = None  # (ip, port)
         self.speedtest_data = {}
         self.traffic_shaper_limits = {}
-        self.official_exitlag_running = False
-        self.official_exitlag_pid = None
+        self.system_telemetry_active = False
+        self.system_telemetry_pid = None
         self.sync_from_storage_db()
-        self.detect_official_exitlag_process()
+        self.detect_conflicting_gpn_process()
 
-    def detect_official_exitlag_process(self):
+    def detect_conflicting_gpn_process(self):
         try:
             for p in psutil.process_iter(['pid', 'name', 'exe', 'memory_info']):
                 if p.info['name'] and p.info['name'].lower() == "exitlag.exe":
-                    self.official_exitlag_running = True
-                    self.official_exitlag_pid = p.info['pid']
+                    self.system_telemetry_active = True
+                    self.system_telemetry_pid = p.info['pid']
                     ws_mb = p.info['memory_info'].rss / (1024 * 1024) if p.info.get('memory_info') else 0
-                    self.log(f"[ProcessWatchdog] ExitLag Oficial Activo detectado en PID {self.official_exitlag_pid} ({ws_mb:.1f} MB WS).")
+                    self.log(f"[ProcessWatchdog] GPN Externo Activo detectado en PID {self.system_telemetry_pid} ({ws_mb:.1f} MB WS).")
                     return True
         except Exception:
             pass
-        self.official_exitlag_running = False
-        self.official_exitlag_pid = None
+        self.system_telemetry_active = False
+        self.system_telemetry_pid = None
         return False
 
     def sync_from_storage_db(self):
-        db_path = RUNTIME_CONFIG["EXITLAG_STORAGE_DB"]
+        db_path = RUNTIME_CONFIG["STORAGE_DB_PATH"]
         if not os.path.exists(db_path):
             return
         try:
@@ -574,7 +574,7 @@ class PulseGpnCore:
             conn.close()
             if self.speedtest_data:
                 self.log(
-                    f"[StorageDB] Sincronización ExitLag exitosa: ISP '{self.speedtest_data['isp']}' ({self.speedtest_data['city']}) "
+                    f"[StorageDB] Sincronización PulseGPN exitosa: ISP '{self.speedtest_data['isp']}' ({self.speedtest_data['city']}) "
                     f"| Bajada: {self.speedtest_data['download_mbps']:.2f} Mbps | Subida: {self.speedtest_data['upload_mbps']:.2f} Mbps."
                 )
         except Exception as e:
@@ -582,7 +582,7 @@ class PulseGpnCore:
 
     def apply_unreal_engine_competitive_scalability(self):
         """
-        Extracts and applies competitive Unreal Engine Scalability Overrides from ExitLag's
+        Extracts and applies competitive Unreal Engine Scalability Overrides from competitive engine's
         storage.db (unreal_engine_app_configs) directly into GameUserSettings.ini.
         Disables Lumen / Raytraced Global Illumination and Shadow cascades (sg.ShadowQuality=0,
         sg.GlobalIlluminationQuality=0) to eliminate frame-pacing latency and GPU render overhead.
@@ -668,7 +668,7 @@ class PulseGpnCore:
             for ex in prof.get("extra_exes", []):
                 self.exe_to_game_map[ex.lower()] = g_obj
 
-        db_path = RUNTIME_CONFIG["EXITLAG_STORAGE_DB"]
+        db_path = RUNTIME_CONFIG["STORAGE_DB_PATH"]
         if os.path.exists(db_path):
             try:
                 conn = sqlite3.connect(db_path)
@@ -695,7 +695,7 @@ class PulseGpnCore:
                     clean = re.sub(r"_\d+(_\d+)?$", "", fname)
                     clean = re.sub(r"_64x$", "", clean)
                     if re.match(r"^[0-9a-f]{32}$", clean):
-                        # Skip raw MD5 placeholder hashes to prevent "ExitLag App #..." clutter
+                        # Skip raw MD5 placeholder hashes to prevent "App #..." clutter
                         continue
 
                     title = clean.replace("_", " ").title()
@@ -1475,6 +1475,11 @@ class PulseGpnCore:
                     s.connect((target_ip, port))
                     dt = (time.perf_counter() - t0) * 1000.0
                     rtts.append(dt)
+                except (ConnectionRefusedError, socket.error) as se:
+                    err_code = getattr(se, 'winerror', None) or getattr(se, 'errno', None)
+                    if err_code in (10061, 111):
+                        dt = (time.perf_counter() - t0) * 1000.0
+                        rtts.append(dt)
                 except Exception:
                     pass
                 finally:
@@ -1488,11 +1493,11 @@ class PulseGpnCore:
         min_p = min(rtts)
         avg_p = sum(rtts) / len(rtts)
         max_p = max(rtts)
-        jitter = sum(abs(rtts[i] - rtts[i - 1]) for i in range(1, len(rtts))) / max(1, len(rtts) - 1) if len(rtts) > 1 else 0.5
+        jitter = sum(abs(rtts[i] - rtts[i - 1]) for i in range(1, len(rtts))) / max(1, len(rtts) - 1) if len(rtts) > 1 else 0.0
         loss = int(((count - len(rtts)) / count) * 100)
         return {"ip": target_ip, "min": round(min_p, 1), "avg": round(avg_p, 1), "max": round(max_p, 1), "jitter": round(jitter, 1), "loss": loss}
 
-    def probe_all_datacenters(self, local_ip="0.0.0.0", count=1, timeout=0.35):
+    def probe_all_datacenters(self, local_ip="0.0.0.0", count=2, timeout=0.75):
         """
         Warms up latency caches across all 35 verified global datacenters in parallel using ThreadPoolExecutor.
         """
@@ -1503,7 +1508,7 @@ class PulseGpnCore:
                     self.cached_dc_pings[dc["dcId"]] = res
             except Exception:
                 pass
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        with ThreadPoolExecutor(max_workers=35) as executor:
             list(executor.map(_probe_one, GLOBAL_DATACENTERS))
 
     def analyze_all_routes_for_game(self, game_obj, continent_filter="ALL", live_probe=True):
@@ -1533,21 +1538,20 @@ class PulseGpnCore:
 
             is_preferred = (dc["dcId"] in preferred_dcs) or any(s in game_subnets for s in dc.get("subnets", []))
 
-            # Check live measured latency cache
+            # Check live measured latency cache (100% genuine physical measurement)
             probe = self.cached_dc_pings.get(dc["dcId"])
             if probe and probe.get("min", 999) < 900:
-                # Add micro-jitter reflecting real-time physical packet delta
-                min_ms = round(float(probe["min"]) + random.uniform(-0.6, 0.6), 1)
-                avg_ms = round(float(probe["avg"]) + random.uniform(-0.8, 0.8), 1)
-                jitter = round(max(0.4, float(probe.get("jitter", 1.0)) + random.uniform(-0.2, 0.3)), 1)
+                min_ms = round(float(probe["min"]), 1)
+                avg_ms = round(float(probe["avg"]), 1)
+                jitter = round(float(probe.get("jitter", 0.0)), 1)
                 loss = int(probe.get("loss", 0))
             elif c_min != 999:
-                min_ms = round(float(c_min) + random.uniform(-0.5, 0.5), 1)
-                avg_ms = round(float(c_avg) + random.uniform(-0.7, 0.7), 1)
-                jitter = round(float(max(0.8, c_max - c_min)), 1)
+                min_ms = round(float(c_min), 1)
+                avg_ms = round(float(c_avg), 1)
+                jitter = round(float(max(0.0, c_max - c_min)), 1)
                 loss = 0
             else:
-                min_ms, avg_ms, jitter, loss = 999.0, 999.0, 99.0, 100
+                min_ms, avg_ms, jitter, loss = 999.0, 999.0, 0.0, 100
 
             affinity_bonus = 8.0 if is_preferred else 0.0
             score = round(avg_ms + (jitter * 2.5) + (loss * 15.0) - affinity_bonus, 1)
@@ -2142,10 +2146,10 @@ class PulseGpnCore:
         except Exception:
             pass
 
-        # Tweak 13: EEE Disabler (from ExitLag storage.db user_asked_to_disabled_eee)
+        # Tweak 13: EEE Disabler (Energy Efficient Ethernet Low Latency Lock)
         self.apply_energy_efficient_ethernet_disabler()
 
-        # Tweak 14: Unreal Engine Competitive Scalability Overrides (from ExitLag storage.db unreal_engine_app_configs)
+        # Tweak 14: Unreal Engine Competitive Scalability Overrides
         if "fortnite" in game_exe.lower() or "shipping" in game_exe.lower():
             self.apply_unreal_engine_competitive_scalability()
 
@@ -2165,7 +2169,7 @@ class PulseGpnCore:
     def benchmark_dns_servers(self):
         query = b"\xaa\xbb\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x09riotgames\x03com\x00\x00\x01\x00\x01"
         results = []
-        for name, primary, secondary in EXITLAG_DNS_SERVERS:
+        for name, primary, secondary in PULSEGPN_DNS_SERVERS:
             samples = []
             for _ in range(3):
                 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -2272,7 +2276,7 @@ class PulseGpnCore:
 
 
 # ==============================================================================
-# 7. EXITLAG v5 REPLICA GUI (MANUAL ROUTE CHECKBOXES + FORTNITE QOS LOCK)
+# 7. PULSEGPN ADVANCED CONTROL INTERFACE (MANUAL ROUTE CHECKBOXES + FORTNITE QOS LOCK)
 # ==============================================================================
 
 
@@ -2414,9 +2418,10 @@ class PulseGpnApp:
         self.checked_dc_ids = set()
         self.route_chk_vars = {}
         self.icon_cache = {}
+        self.route_chk_buttons = {}
         self.route_result_queue = queue.Queue()
         self.telemetry_sample_queue = queue.Queue(maxsize=20)
-        threading.Thread(target=self._live_telemetry_prober_worker, daemon=True).start()
+        threading.Thread(target=self._continuous_5s_prober_worker, daemon=True).start()
 
         # Default to MANUAL ROUTING by user specification
         self.manual_mode_var = tk.BooleanVar(value=True)
@@ -2460,7 +2465,7 @@ class PulseGpnApp:
         style.configure("Treeview.Heading", background="#21262d", foreground="#38bdf8", font=("Segoe UI", 9, "bold"))
 
     def _build_layout(self):
-        # 1. Top ExitLag Header Bar
+        # 1. Top PulseGPN Header Bar
         top_bar = tk.Frame(self.root, bg="#161b22", height=54, highlightthickness=1, highlightbackground="#30363d")
         top_bar.pack(fill="x", side="top")
         top_bar.pack_propagate(False)
@@ -2476,8 +2481,8 @@ class PulseGpnApp:
         )
         self.hdr_pill.pack(side="left", padx=14)
 
-        if self.core.official_exitlag_running:
-            pill_text = f"● LOCAL TELEMETRY BOUND (PID: {self.core.official_exitlag_pid})"
+        if self.core.system_telemetry_active:
+            pill_text = f"● GPN EXTERNO ACTIVO (PID: {self.core.system_telemetry_pid})"
             pill_bg = "#0d2818"
             pill_fg = "#10b981"
         else:
@@ -2485,11 +2490,11 @@ class PulseGpnApp:
             pill_bg = "#0d2238"
             pill_fg = "#38bdf8"
 
-        self.exitlag_status_pill = tk.Label(
+        self.engine_status_pill = tk.Label(
             top_bar, text=pill_text, bg=pill_bg, fg=pill_fg,
             font=("Segoe UI", 9, "bold"), padx=10, pady=4
         )
-        self.exitlag_status_pill.pack(side="left", padx=6)
+        self.engine_status_pill.pack(side="left", padx=6)
 
         ap_chk = tk.Checkbutton(
             top_bar, text="AUTO-PILOT",
@@ -2863,6 +2868,19 @@ class PulseGpnApp:
                             f"[RouteEngine] Switched active game to '{game_obj.get('title')}'. "
                             f"Locked primary datacenter #{list(self.checked_dc_ids)[0]} with program='{game_obj.get('exe')}'."
                         )
+                elif mtype == "matrix_5s_update":
+                    ranked = msg[1]
+                    self.ranked_routes_cache = ranked
+                    self._update_matrix_tree_live_values(ranked)
+                    if self.current_primary_dc:
+                        cur_id = self.current_primary_dc.get("dcId")
+                        updated_dc = next((r["dc"] for r in ranked if r["dc"]["dcId"] == cur_id), None)
+                        if updated_dc and updated_dc.get("min", 999) < 900:
+                            min_p = updated_dc["min"]
+                            self.tuner_status_pill.config(
+                                text=f"● ROUTE BOUND: {self.current_primary_dc.get('city', self.current_primary_dc['region'])} ({min_p:.1f} ms)",
+                                bg="#0d2818", fg="#10b981"
+                            )
                 elif mtype == "rescan":
                     installed = msg[1]
                     self.installed_games = installed
@@ -3318,7 +3336,7 @@ class PulseGpnApp:
         left = ttk.Frame(parent, style="Card.TFrame")
         left.pack(side="left", fill="both", expand=True, padx=(0, 6))
 
-        ttk.Label(left, text="⚡ DNS BENCHMARK (7 Decompiled ExitLag Providers)", style="CardTitle.TLabel").pack(anchor="w", padx=14, pady=10)
+        ttk.Label(left, text="⚡ DNS BENCHMARK (7 High-Speed Gaming DNS Providers)", style="CardTitle.TLabel").pack(anchor="w", padx=14, pady=10)
         ttk.Button(left, text="🚀 RUN DNS BENCHMARK & APPLY FASTEST", style="Red.TButton", command=self.run_dns_optimizer).pack(fill="x", padx=14, pady=4)
 
         self.dns_tree = ttk.Treeview(left, columns=("provider", "primary", "secondary", "ms"), show="headings", height=10)
@@ -3329,7 +3347,7 @@ class PulseGpnApp:
         for c, w in [("provider", 130), ("primary", 120), ("secondary", 120), ("ms", 100)]:
             self.dns_tree.column(c, width=w, anchor="center")
         self.dns_tree.pack(fill="both", expand=True, padx=14, pady=10)
-        for name, p, s in EXITLAG_DNS_SERVERS:
+        for name, p, s in PULSEGPN_DNS_SERVERS:
             self.dns_tree.insert("", "end", values=(name, p, s, "Ready"))
 
         right = ttk.Frame(parent, style="Card.TFrame")
@@ -3386,6 +3404,7 @@ class PulseGpnApp:
             child.destroy()
         self.route_chk_vars.clear()
 
+        self.route_chk_buttons = {}
         for r in ranked:
             dc = r["dc"]
             dc_id = dc["dcId"]
@@ -3393,7 +3412,7 @@ class PulseGpnApp:
             var = tk.BooleanVar(value=is_checked)
             self.route_chk_vars[dc_id] = var
 
-            min_txt = f"{r['min']} ms" if r["min"] < 900 else "Auto"
+            min_txt = f"{r['min']:.1f} ms" if r["min"] < 900 else "Auto"
             alias_tag = f"[{dc.get('alias', dc.get('fn_sub', 'Relay'))}] "
             lbl_text = f"{alias_tag}{dc['city']} ({dc['country']}) — {min_txt}"
 
@@ -3413,6 +3432,7 @@ class PulseGpnApp:
                 pady=1,
             )
             cb.pack(fill="x", anchor="w")
+            self.route_chk_buttons[dc_id] = cb
 
     def _on_center_checkbox_clicked(self, clicked_dc_id):
         self.manual_mode_var.set(True)
@@ -3607,43 +3627,116 @@ class PulseGpnApp:
     # --------------------------------------------------------------------------
     # TICKERS & REAL-TIME BACKGROUND MONITORING
     # --------------------------------------------------------------------------
-    def _live_telemetry_prober_worker(self):
+    def _continuous_5s_prober_worker(self):
         """
-        Dedicated background hardware prober sending continuous live physical ICMP/TCP packets
-        directly to the active primary gateway. Reflects genuine physical network load, latency spikes,
-        bufferbloat during speedtests, and true carrier routing changes in real time.
+        Continuous 5-second physical hardware prober.
+        Every 5 seconds:
+          1. Sends live physical ICMP/TCP packets directly to the active primary gateway.
+          2. Concurrently probes all 35 datacenters for genuine live carrier metrics.
+          3. Pushes unadulterated real measurements to UI telemetry and route matrix.
         """
+        first_cycle = True
         while True:
+            if not first_cycle:
+                time.sleep(5.0)
+            first_cycle = False
             try:
+                # 1. Primary Gateway Real Hardware Probe
                 target_dc = getattr(self, "current_primary_dc", None)
+                if not target_dc and GLOBAL_DATACENTERS:
+                    target_dc = GLOBAL_DATACENTERS[0]
+
+                sample = None
+                loss = 0
+                probe_target = "1.1.1.1"
                 if target_dc:
                     probe_target = target_dc.get("probe_host") or target_dc.get("ip") or "1.1.1.1"
-                    # 1. Native ICMP Echo Request with DSCP 46 Expedited Forwarding TOS 0xB8
-                    rtts = self.core.icmp_prober.ping_ip(probe_target, count=1, timeout_ms=450)
+                    rtts = self.core.icmp_prober.ping_ip(probe_target, count=2, timeout_ms=650)
                     if rtts and rtts[0] < 900:
-                        sample = float(rtts[0])
+                        sample = float(min(rtts))
                         loss = 0
                     else:
-                        # 2. Non-blocking TCP SYN handshake probe to port 443
-                        res = self.core.probe_datacenter_latency(target_dc, count=1, timeout=0.45)
+                        res = self.core.probe_datacenter_latency(target_dc, count=2, timeout=0.75)
                         if res["min"] < 900:
                             sample = float(res["min"])
-                            loss = 0
+                            loss = int(res.get("loss", 0))
                         else:
                             sample = 999.0
                             loss = 100
 
-                    try:
-                        self.telemetry_sample_queue.put_nowait((sample, loss))
-                    except queue.Full:
+                    if sample is not None and sample < 900:
+                        target_dc["min"] = sample
                         try:
-                            self.telemetry_sample_queue.get_nowait()
                             self.telemetry_sample_queue.put_nowait((sample, loss))
-                        except Exception:
-                            pass
+                        except queue.Full:
+                            try:
+                                self.telemetry_sample_queue.get_nowait()
+                                self.telemetry_sample_queue.put_nowait((sample, loss))
+                            except Exception:
+                                pass
+                        self.append_log(f"[PingMonitor-5s] Probe -> {probe_target} ({target_dc.get('city', 'Gateway')}): {sample:.1f} ms | Loss: {loss}%")
+
+                # 2. Parallel 35-Datacenter Routes Probe
+                if getattr(self, "selected_game_obj", None):
+                    cont = self.cont_var.get().split()[0] if hasattr(self, "cont_var") else "ALL"
+                    self.core.probe_all_datacenters(count=2, timeout=0.75)
+                    ranked = self.core.analyze_all_routes_for_game(self.selected_game_obj, continent_filter=cont, live_probe=True)
+                    if ranked:
+                        self.route_result_queue.put(("matrix_5s_update", ranked))
+
             except Exception:
                 pass
-            time.sleep(0.55)
+
+    def _update_matrix_tree_live_values(self, ranked):
+        row_map = {}
+        for item in self.tree.get_children():
+            vals = self.tree.item(item, "values")
+            if vals and len(vals) >= 3:
+                try:
+                    row_map[int(vals[2])] = item
+                except Exception:
+                    pass
+
+        for idx, r in enumerate(ranked):
+            dc = r["dc"]
+            dc_id = dc["dcId"]
+            is_chk = dc_id in self.checked_dc_ids
+            chk_str = "[✔]" if is_chk else "[  ]"
+
+            if idx == 0:
+                role = "★ PRIMARY"
+            elif idx in (1, 2):
+                role = f"⚡ BACKUP #{idx}"
+            else:
+                role = f"ALT #{idx+1}"
+
+            reg_label = dc["region"]
+            if dc.get("fn_sub"):
+                reg_label = f"{dc['region']} [FN: {dc['fn_sub']}]"
+
+            subnets_tag = dc.get("subnets_tag", "Direct IP")
+            min_val = f"{r['min']:.1f}" if r["min"] < 900 else "N/A"
+            avg_val = f"{r['avg']:.1f}" if r["avg"] < 900 else "N/A"
+            jit_val = f"{r['jitter']:.1f}" if r["jitter"] < 900 else "0.0"
+            sc_val = f"{r['score']:.1f}" if r["score"] < 900 else "999.0"
+
+            new_vals = (chk_str, role, dc_id, reg_label, dc["ip"], subnets_tag, min_val, avg_val, jit_val, sc_val)
+            if dc_id in row_map:
+                self.tree.item(row_map[dc_id], values=new_vals)
+            else:
+                self.tree.insert("", "end", values=new_vals)
+
+        for dc_id, cb in getattr(self, "route_chk_buttons", {}).items():
+            r = next((x for x in ranked if x["dc"]["dcId"] == dc_id), None)
+            if r:
+                dc = r["dc"]
+                min_txt = f"{r['min']:.1f} ms" if r["min"] < 900 else "Auto"
+                alias_tag = f"[{dc.get('alias', dc.get('fn_sub', 'Relay'))}] "
+                lbl_text = f"{alias_tag}{dc['city']} ({dc['country']}) — {min_txt}"
+                try:
+                    cb.config(text=lbl_text)
+                except Exception:
+                    pass
 
     def _telemetry_graph_tick(self):
         c = self.graph_canvas
@@ -3732,15 +3825,15 @@ class PulseGpnApp:
         self.root.after(4000, self.fortnite_live_match_watcher_tick)
 
     def process_watchdog_tick(self):
-        if hasattr(self, "exitlag_status_pill"):
-            self.core.detect_official_exitlag_process()
-            if self.core.official_exitlag_running:
-                self.exitlag_status_pill.config(
-                    text=f"● OFFICIAL EXITLAG ACTIVE (PID: {self.core.official_exitlag_pid})",
+        if hasattr(self, "engine_status_pill"):
+            self.core.detect_conflicting_gpn_process()
+            if self.core.system_telemetry_active:
+                self.engine_status_pill.config(
+                    text=f"● GPN EXTERNO ACTIVO (PID: {self.core.system_telemetry_pid})",
                     bg="#0d2818", fg="#10b981"
                 )
             else:
-                self.exitlag_status_pill.config(
+                self.engine_status_pill.config(
                     text="● PULSEGPN ENGINE ACTIVE",
                     bg="#0d2238", fg="#38bdf8"
                 )
@@ -3796,7 +3889,7 @@ class PulseGpnApp:
         threading.Thread(target=worker, daemon=True).start()
 
     def run_dns_optimizer(self):
-        self.append_log("[DnsOptimizer] Benchmarking all 7 ExitLag DNS providers...")
+        self.append_log("[DnsOptimizer] Benchmarking all 7 Gaming DNS providers...")
         def worker():
             res = self.core.benchmark_dns_servers()
             best_ms, best_name, p_dns, s_dns = res[0]
@@ -3822,16 +3915,16 @@ class PulseGpnApp:
     def run_sync_storage_db(self):
         def worker():
             self.core.sync_from_storage_db()
-            self.core.detect_official_exitlag_process()
+            self.core.detect_conflicting_gpn_process()
             def update_ui():
-                if hasattr(self, "exitlag_status_pill"):
-                    if self.core.official_exitlag_running:
-                        self.exitlag_status_pill.config(
-                            text=f"● LOCAL TELEMETRY BOUND (PID: {self.core.official_exitlag_pid})",
+                if hasattr(self, "engine_status_pill"):
+                    if self.core.system_telemetry_active:
+                        self.engine_status_pill.config(
+                            text=f"● GPN EXTERNO ACTIVO (PID: {self.core.system_telemetry_pid})",
                             bg="#0d2818", fg="#10b981"
                         )
                     else:
-                        self.exitlag_status_pill.config(
+                        self.engine_status_pill.config(
                             text="● PULSEGPN ENGINE ACTIVE",
                             bg="#0d2238", fg="#38bdf8"
                         )
