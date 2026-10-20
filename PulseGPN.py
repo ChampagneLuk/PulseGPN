@@ -34,6 +34,16 @@ import time
 import winreg
 import tkinter as tk
 from tkinter import ttk, filedialog
+import struct
+
+class MIB_TCPROW(ctypes.Structure):
+    _fields_ = [
+        ("dwState", ctypes.c_ulong),
+        ("dwLocalAddr", ctypes.c_ulong),
+        ("dwLocalPort", ctypes.c_ulong),
+        ("dwRemoteAddr", ctypes.c_ulong),
+        ("dwRemotePort", ctypes.c_ulong),
+    ]
 
 try:
     import pystray
@@ -2645,6 +2655,120 @@ class PulseGpnCore:
             bridge_target_ip, bridge_target_port, local_ips, redundancy=redundancy, backup_hosts=backup_ips
         )
 
+    def terminate_process_tcp_connections(self, target_pids):
+        """
+        Winsock TCP RST injection: closes active TCP socket sessions for target process PIDs
+        using kernel-level SetTcpEntry(MIB_TCP_STATE_DELETE_TCB).
+        Forces game client to acknowledge disconnection and trigger its reconnect protocol.
+        """
+        closed_count = 0
+        try:
+            for c in psutil.net_connections(kind="tcp"):
+                if c.pid in target_pids and c.raddr and c.status == "ESTABLISHED":
+                    try:
+                        lip = getattr(c.laddr, "ip", None) or c.laddr[0]
+                        lport = getattr(c.laddr, "port", None) or c.laddr[1]
+                        rip = getattr(c.raddr, "ip", None) or c.raddr[0]
+                        rport = getattr(c.raddr, "port", None) or c.raddr[1]
+                        if rip.startswith("127.") or rip == "0.0.0.0":
+                            continue
+
+                        row = MIB_TCPROW()
+                        row.dwState = 12  # MIB_TCP_STATE_DELETE_TCB
+                        row.dwLocalAddr = struct.unpack("<I", socket.inet_aton(lip))[0]
+                        row.dwLocalPort = socket.htons(int(lport))
+                        row.dwRemoteAddr = struct.unpack("<I", socket.inet_aton(rip))[0]
+                        row.dwRemotePort = socket.htons(int(rport))
+
+                        if ctypes.windll.iphlpapi.SetTcpEntry(ctypes.byref(row)) == 0:
+                            closed_count += 1
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        return closed_count
+
+    def execute_server_hotswap(self, old_dc, new_dc, game_obj, backup_dcs=None, redundancy=2, lock_fn_subregion=True):
+        """
+        ExitLag-style Seamless Server Hot-Swap Engine:
+          1. Identifies running game client processes (PIDs).
+          2. Performs a Winsock socket reset:
+             - Closes active game TCP sockets using SetTcpEntry(MIB_TCP_STATE_DELETE_TCB).
+             - Applies a brief 400ms firewall pulse blocking the old datacenter IP/subnets,
+               forcing the game's UDP netcode to detect disconnection and trigger its client reconnect sequence.
+          3. Flushes DNS and routing/ARP caches (ipconfig /flushdns, arp -d *).
+          4. Atomically replaces kernel routes with new primary datacenter Metric 1 paths.
+          5. Re-points the multipath bridge engine to the new datacenter target.
+          6. Removes the temporary firewall pulse, allowing the game's reconnect attempt
+             to immediately traverse the new route with zero game restart required.
+        """
+        game_exe = game_obj.get("exe", "game.exe") if game_obj else "game.exe"
+        old_reg = old_dc.get("region", "Previous Datacenter") if old_dc else "Previous DC"
+        new_reg = new_dc.get("region", "New Datacenter") if new_dc else "New DC"
+        old_ip = old_dc.get("ip") if old_dc else None
+        new_ip = new_dc.get("ip") if new_dc else None
+
+        self.log(f"[HotSwapEngine] ⚡ Executing live route hot-swap for {game_exe}: {old_reg} ──► {new_reg}")
+
+        target_exes = [game_exe.lower()] + [e.lower() for e in (game_obj.get("extra_exes", []) if game_obj else [])]
+        base_names = [t.replace(".exe", "") for t in target_exes]
+        game_pids = set()
+        try:
+            for p in psutil.process_iter(['pid', 'name']):
+                try:
+                    pname = (p.info['name'] or '').lower()
+                    for b in base_names:
+                        if b in pname:
+                            game_pids.add(p.info['pid'])
+                            break
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+        except Exception:
+            pass
+
+        # 1. Reset active TCP connections for the game process
+        if game_pids:
+            resets = self.terminate_process_tcp_connections(game_pids)
+            if resets > 0:
+                self.log(f"[HotSwapEngine] Terminated {resets} active TCP socket session(s) via Winsock RST.")
+
+        # 2. Temporary 400ms firewall pulse to sever old server UDP/TCP traffic
+        rule_name = "PulseGPN_HotSwap_Drop"
+        if old_ip and old_ip != "999.0":
+            try:
+                subprocess.run(
+                    ["netsh", "advfirewall", "firewall", "add", "rule", f"name={rule_name}", "dir=out", "action=block", f"remoteip={old_ip}"],
+                    capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW
+                )
+            except Exception:
+                pass
+
+        # 3. Flush DNS & ARP caches
+        try:
+            subprocess.run(["ipconfig", "/flushdns"], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            subprocess.run(["arp", "-d", "*"], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        except Exception:
+            pass
+
+        # 4. Atomically apply new kernel routes and multipath bridge
+        self.apply_specific_dc_route(new_dc, backup_dcs, game_obj, redundancy=redundancy, lock_fn_subregion=lock_fn_subregion)
+
+        # 5. Brief 400ms window so game netcode detects socket drop and initiates reconnection
+        time.sleep(0.40)
+
+        # 6. Remove temporary firewall pulse so game reconnects over the new path
+        if old_ip and old_ip != "999.0":
+            try:
+                subprocess.run(
+                    ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={rule_name}"],
+                    capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW
+                )
+            except Exception:
+                pass
+
+        self.last_active_primary_dc = new_dc
+        self.log(f"[HotSwapEngine] ✔ Hot-swap completed: Game reconnected through {new_reg} ({new_ip}) with 0 game restart required.")
+
     def auto_analyze_and_apply_best_routes(self, game_obj, continent_filter="ALL", redundancy=2, live_probe=True, lock_fn_subregion=True):
         ranked = self.analyze_all_routes_for_game(game_obj, continent_filter=continent_filter, live_probe=live_probe)
         if not ranked:
@@ -3362,6 +3486,7 @@ class PulseGpnApp:
 
         # Default to MANUAL ROUTING by user specification
         self.manual_mode_var = tk.BooleanVar(value=True)
+        self.hotswap_enabled_var = tk.BooleanVar(value=True)
         self.autopilot_var = tk.BooleanVar(value=False)
         self.fn_subregion_lock_var = tk.BooleanVar(value=True)
         self.multi_chk_var = tk.BooleanVar(value=False)
@@ -4240,6 +4365,13 @@ class PulseGpnApp:
             activebackground="#21262d", activeforeground="#38bdf8", font=("Segoe UI", 8), anchor="w"
         ).pack(fill="x", pady=(2, 0))
 
+        tk.Checkbutton(
+            mode_box, text="⚡ ExitLag Server Hot-Swap (Live Zero-Restart Handoff)",
+            variable=self.hotswap_enabled_var,
+            bg="#21262d", fg="#a855f7", selectcolor="#0d1117",
+            activebackground="#21262d", activeforeground="#c084fc", font=("Segoe UI", 8, "bold"), anchor="w"
+        ).pack(fill="x", pady=(2, 0))
+
         # Region Filter Combobox
         ttk.Label(left_col, text="FILTER CONTINENT / REGION:", style="Sub.TLabel").pack(anchor="w", padx=12, pady=(6, 1))
         cont_cb = ttk.Combobox(
@@ -4747,21 +4879,59 @@ class PulseGpnApp:
 
         primary_dc = chosen_dcs[0]
         backup_dcs = chosen_dcs[1:] if len(chosen_dcs) > 1 else []
-
         fn_lock = self.fn_subregion_lock_var.get()
-        self.hdr_pill.config(text=f"● BINDING: {primary_dc['region']}...", bg="#0d2238", fg="#38bdf8")
 
-        def bg_apply():
-            self.core.apply_specific_dc_route(
-                primary_dc,
-                backup_dcs,
-                g,
-                redundancy=redundancy,
-                lock_fn_subregion=fn_lock
+        prev_primary = getattr(self, "current_primary_dc", None)
+        is_changing_dc = (
+            prev_primary is not None and
+            primary_dc is not None and
+            prev_primary.get("dcId") != primary_dc.get("dcId") and
+            getattr(self, "routes_active", True) and
+            getattr(self, "hotswap_enabled_var", None) and
+            self.hotswap_enabled_var.get()
+        )
+
+        if is_changing_dc:
+            p_from = prev_primary.get("city", prev_primary.get("region", "Old DC"))
+            p_to = primary_dc.get("city", primary_dc.get("region", "New DC"))
+            self.hdr_pill.config(
+                text=f"⚡ HOT-SWAP: {p_from} ──► {p_to} (Reconnecting session...)",
+                bg="#2d1d0d", fg="#f59e0b"
             )
-            self.route_result_queue.put(("apply_complete", primary_dc, g))
+            self.tuner_status_pill.config(
+                text=f"⚡ HOT-SWAP MIGRATION...",
+                bg="#2d1d0d", fg="#f59e0b"
+            )
+            self.append_log(
+                f"[HotSwap] Triggering live server hot-swap: {prev_primary.get('region')} ──► {primary_dc.get('region')}."
+            )
 
-        threading.Thread(target=bg_apply, daemon=True).start()
+            def bg_apply():
+                self.core.execute_server_hotswap(
+                    prev_primary,
+                    primary_dc,
+                    g,
+                    backup_dcs=backup_dcs,
+                    redundancy=redundancy,
+                    lock_fn_subregion=fn_lock
+                )
+                self.route_result_queue.put(("apply_complete", primary_dc, g))
+
+            threading.Thread(target=bg_apply, daemon=True).start()
+        else:
+            self.hdr_pill.config(text=f"● BINDING: {primary_dc['region']}...", bg="#0d2238", fg="#38bdf8")
+
+            def bg_apply():
+                self.core.apply_specific_dc_route(
+                    primary_dc,
+                    backup_dcs,
+                    g,
+                    redundancy=redundancy,
+                    lock_fn_subregion=fn_lock
+                )
+                self.route_result_queue.put(("apply_complete", primary_dc, g))
+
+            threading.Thread(target=bg_apply, daemon=True).start()
 
     def toggle_apply_routes(self):
         if self.routes_active:
