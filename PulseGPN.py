@@ -2418,10 +2418,14 @@ class PulseGpnApp:
         self.checked_dc_ids = set()
         self.route_chk_vars = {}
         self.icon_cache = {}
+        self.current_continent_filter = "ALL"
+        self._last_rendered_sample = 38.0
+        self._last_loss = 0
         self.route_chk_buttons = {}
         self.route_result_queue = queue.Queue()
-        self.telemetry_sample_queue = queue.Queue(maxsize=20)
-        threading.Thread(target=self._continuous_5s_prober_worker, daemon=True).start()
+        self.telemetry_sample_queue = queue.Queue(maxsize=40)
+        threading.Thread(target=self._live_telemetry_prober_worker, daemon=True).start()
+        threading.Thread(target=self._periodic_5s_routes_prober_worker, daemon=True).start()
 
         # Default to MANUAL ROUTING by user specification
         self.manual_mode_var = tk.BooleanVar(value=True)
@@ -3396,6 +3400,10 @@ class PulseGpnApp:
         self.apply_checked_routes_now()
 
     def _on_continent_filter_change(self):
+        try:
+            self.current_continent_filter = self.cont_var.get().split()[0]
+        except Exception:
+            self.current_continent_filter = "ALL"
         if self.selected_game_obj:
             self.select_and_apply_game_routes(self.selected_game_obj, live_probe=False)
 
@@ -3627,36 +3635,27 @@ class PulseGpnApp:
     # --------------------------------------------------------------------------
     # TICKERS & REAL-TIME BACKGROUND MONITORING
     # --------------------------------------------------------------------------
-    def _continuous_5s_prober_worker(self):
+    def _live_telemetry_prober_worker(self):
         """
-        Continuous 5-second physical hardware prober.
-        Every 5 seconds:
-          1. Sends live physical ICMP/TCP packets directly to the active primary gateway.
-          2. Concurrently probes all 35 datacenters for genuine live carrier metrics.
-          3. Pushes unadulterated real measurements to UI telemetry and route matrix.
+        Continuous real-time hardware telemetry prober.
+        Sends live native ICMP Echo (TOS 0xB8) / TCP SYN packets every ~480ms
+        directly to the active primary gateway. Guarantees non-stop fluid
+        telemetry stream so the real-time graph continuously flows and never freezes.
         """
-        first_cycle = True
         while True:
-            if not first_cycle:
-                time.sleep(5.0)
-            first_cycle = False
             try:
-                # 1. Primary Gateway Real Hardware Probe
                 target_dc = getattr(self, "current_primary_dc", None)
                 if not target_dc and GLOBAL_DATACENTERS:
                     target_dc = GLOBAL_DATACENTERS[0]
 
-                sample = None
-                loss = 0
-                probe_target = "1.1.1.1"
                 if target_dc:
                     probe_target = target_dc.get("probe_host") or target_dc.get("ip") or "1.1.1.1"
-                    rtts = self.core.icmp_prober.ping_ip(probe_target, count=2, timeout_ms=650)
+                    rtts = self.core.icmp_prober.ping_ip(probe_target, count=1, timeout_ms=450)
                     if rtts and rtts[0] < 900:
-                        sample = float(min(rtts))
+                        sample = float(rtts[0])
                         loss = 0
                     else:
-                        res = self.core.probe_datacenter_latency(target_dc, count=2, timeout=0.75)
+                        res = self.core.probe_datacenter_latency(target_dc, count=1, timeout=0.45)
                         if res["min"] < 900:
                             sample = float(res["min"])
                             loss = int(res.get("loss", 0))
@@ -3664,7 +3663,7 @@ class PulseGpnApp:
                             sample = 999.0
                             loss = 100
 
-                    if sample is not None and sample < 900:
+                    if sample < 900:
                         target_dc["min"] = sample
                         try:
                             self.telemetry_sample_queue.put_nowait((sample, loss))
@@ -3674,18 +3673,31 @@ class PulseGpnApp:
                                 self.telemetry_sample_queue.put_nowait((sample, loss))
                             except Exception:
                                 pass
-                        self.append_log(f"[PingMonitor-5s] Probe -> {probe_target} ({target_dc.get('city', 'Gateway')}): {sample:.1f} ms | Loss: {loss}%")
+            except Exception:
+                pass
+            time.sleep(0.48)
 
-                # 2. Parallel 35-Datacenter Routes Probe
+    def _periodic_5s_routes_prober_worker(self):
+        """
+        Continuous 5-second Datacenter Matrix prober.
+        Every 5 seconds, concurrently queries all 35 transit points in parallel
+        without touching Tkinter variables from the background thread.
+        Pushes unadulterated rankings to the UI queue for smooth in-place matrix updates.
+        """
+        time.sleep(2.0)
+        while True:
+            try:
                 if getattr(self, "selected_game_obj", None):
-                    cont = self.cont_var.get().split()[0] if hasattr(self, "cont_var") else "ALL"
+                    cont = getattr(self, "current_continent_filter", "ALL")
                     self.core.probe_all_datacenters(count=2, timeout=0.75)
                     ranked = self.core.analyze_all_routes_for_game(self.selected_game_obj, continent_filter=cont, live_probe=True)
                     if ranked:
                         self.route_result_queue.put(("matrix_5s_update", ranked))
-
+                        best_p = ranked[0]["min"]
+                        self.append_log(f"[PingMonitor-5s] All 35 Datacenter routes refreshed. Best Gateway: {ranked[0]['dc']['city']} ({best_p:.1f} ms).")
             except Exception:
                 pass
+            time.sleep(5.0)
 
     def _update_matrix_tree_live_values(self, ranked):
         row_map = {}
@@ -3758,8 +3770,13 @@ class PulseGpnApp:
 
         if latest_sample is not None:
             self.ping_history.append(latest_sample)
-        elif not self.ping_history:
-            self.ping_history.append(38.0)
+            self._last_rendered_sample = latest_sample
+            self._last_loss = latest_loss
+        else:
+            # Continuously advance the waveform with the last known physical sample
+            # so the graph smoothly flows like a living oscilloscope and NEVER freezes!
+            last_s = getattr(self, "_last_rendered_sample", 38.0)
+            self.ping_history.append(last_s)
 
         pts = list(self.ping_history)
         n = len(pts)
@@ -3796,8 +3813,9 @@ class PulseGpnApp:
         max_p = max(pts)
         min_p = min(pts)
         jitter_calc = abs(pts[-1] - pts[-2]) if len(pts) >= 2 else 0.5
+        curr_loss = getattr(self, "_last_loss", 0)
 
-        info_str = f"LATENCY: {curr_p:.1f}ms  |  AVG: {avg_p:.1f}ms  |  MIN: {min_p:.1f}ms  |  MAX: {max_p:.1f}ms  |  JITTER: ±{jitter_calc:.1f}ms  |  LOSS: {latest_loss}%"
+        info_str = f"LATENCY: {curr_p:.1f}ms  |  AVG: {avg_p:.1f}ms  |  MIN: {min_p:.1f}ms  |  MAX: {max_p:.1f}ms  |  JITTER: ±{jitter_calc:.1f}ms  |  LOSS: {curr_loss}%"
         status_color = "#38bdf8" if curr_p < 80 else ("#f59e0b" if curr_p < 140 else "#ff2247")
         c.create_text(w // 2, 14, text=info_str, fill=status_color, font=("Consolas", 9, "bold"))
 
@@ -3813,7 +3831,7 @@ class PulseGpnApp:
                 bg=badge_bg, fg=badge_fg
             )
 
-        self.root.after(600, self._telemetry_graph_tick)
+        self.root.after(480, self._telemetry_graph_tick)
 
     def fortnite_live_match_watcher_tick(self):
         info = self.core.parse_fortnite_live_log_server_and_pings()
