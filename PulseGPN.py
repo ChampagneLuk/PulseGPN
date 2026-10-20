@@ -510,6 +510,58 @@ class PulseGpnCore:
         self.sync_from_storage_db()
         self.detect_conflicting_gpn_process()
 
+    def start_exitlag_auto_sync_watchdog(self, on_change_callback=None):
+        """
+        Background autonomous watchdog thread:
+          1. Monitors %LOCALAPPDATA%\ExitLag\storage.db for live updates (mtime/size).
+             When modified, immediately re-syncs speedtest, traffic shaper, pings, and games.
+          2. Monitors C:\Program Files\ExitLag\ExitLag.exe binary mtime.
+             When binary changes (new ExitLag version installed on host), automatically
+             re-applies the low-latency suite and notifies the UI.
+        """
+        if getattr(self, "_watchdog_started", False):
+            return
+        self._watchdog_started = True
+
+        def loop():
+            last_mtime = 0
+            last_size = 0
+            db_path = RUNTIME_CONFIG["STORAGE_DB_PATH"]
+            bin_dir = r"C:\Program Files\ExitLag"
+            exe_path = os.path.join(bin_dir, "ExitLag.exe")
+            last_exe_mtime = 0
+
+            while True:
+                try:
+                    # 1. Check storage.db updates
+                    if os.path.exists(db_path):
+                        st = os.stat(db_path)
+                        if last_mtime != 0 and (st.st_mtime != last_mtime or st.st_size != last_size):
+                            time.sleep(0.4)
+                            self.sync_from_storage_db()
+                            self.log("[AutoSync] ⚡ Actualización en caliente detectada en ExitLag storage.db -> Datos resincronizados.")
+                            if on_change_callback:
+                                on_change_callback("storage_updated")
+                        last_mtime = st.st_mtime
+                        last_size = st.st_size
+
+                    # 2. Check ExitLag.exe binary updates
+                    if os.path.exists(exe_path):
+                        exe_st = os.stat(exe_path)
+                        if last_exe_mtime != 0 and exe_st.st_mtime != last_exe_mtime:
+                            time.sleep(1.0)
+                            self.log("[AutoSync] ⚡ ¡Nueva versión de ExitLag.exe detectada en disco! Reaplicando suite de ultra-baja latencia...")
+                            self.apply_exitlag_low_latency_stack()
+                            if on_change_callback:
+                                on_change_callback("binary_updated")
+                        last_exe_mtime = exe_st.st_mtime
+                except Exception:
+                    pass
+                time.sleep(10)
+
+        t = threading.Thread(target=loop, daemon=True, name="ExitLagWatchdog")
+        t.start()
+
     def _get_pulse_db_conn(self):
         db_dir = os.path.expandvars(r"%LOCALAPPDATA%\PulseGPN")
         try:
@@ -3109,6 +3161,7 @@ class PulseGpnApp:
         self._build_layout()
         self.root.after(40, self._poll_route_results)
         self.root.after(150, self.initial_startup_auto_analysis)
+        self.core.start_exitlag_auto_sync_watchdog(lambda evt: self.dispatch_ui(self._on_exitlag_auto_synced, evt))
         self.root.after(1000, self._telemetry_graph_tick)
         self.root.after(3000, self.fortnite_live_match_watcher_tick)
         self.root.after(6000, self.process_watchdog_tick)
@@ -3795,6 +3848,12 @@ class PulseGpnApp:
             padx=8, pady=3, cursor="hand2", command=self.open_timer_resolution_dialog
         )
         self.top_timer_res_btn.pack(side="left", padx=4)
+
+        self.watchdog_status_pill = tk.Label(
+            top_nav_bar, text="● EXITLAG SYNC: AUTO", bg="#0d2818", fg="#10b981",
+            font=("Segoe UI", 8, "bold"), padx=8, pady=4
+        )
+        self.watchdog_status_pill.pack(side="right", padx=4)
 
         self.tuner_status_pill = tk.Label(
             top_nav_bar, text="● OPTIMIZED ROUTE ACTIVE", bg="#0d2818", fg="#10b981",
@@ -5007,6 +5066,12 @@ class PulseGpnApp:
     def open_timer_resolution_dialog(self):
         self.switch_page("fps_boost")
         self.refresh_timer_res_status()
+
+    def _on_exitlag_auto_synced(self, evt):
+        if hasattr(self, "watchdog_status_pill"):
+            self.watchdog_status_pill.config(text="● EXITLAG SYNC: HOT-RELOADED", bg="#0d2238", fg="#38bdf8")
+            self.root.after(4000, lambda: self.watchdog_status_pill.config(text="● EXITLAG SYNC: AUTO", bg="#0d2818", fg="#10b981"))
+        self.append_log(f"[AutoSync] Vigilancia activa: Modificación detectada en ExitLag ({evt}). Datos sincronizados automáticamente.")
 
     def RefreshNICTable(self):
         ifs = self.core.get_active_interfaces()

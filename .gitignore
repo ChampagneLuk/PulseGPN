@@ -11,6 +11,10 @@ dist/
 # Binaries for GitHub Releases (uploaded to Releases, untracked in git)
 *.exe
 
+# Credentials and tokens
+.git_token
+*.token
+
 # IDE / Editor folders
 .vscode/
 .idea/

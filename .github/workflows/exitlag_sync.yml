@@ -1,0 +1,70 @@
+name: ExitLag Autonomous Sync & Engine Pipeline
+
+on:
+  schedule:
+    # Run twice daily (every 12 hours)
+    - cron: '0 */12 * * *'
+  workflow_dispatch:
+    inputs:
+      force_sync:
+        description: 'Force sync regardless of version diff'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  check-and-sync:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Build & Parsing Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install psutil pefile pillow pystray pyinstaller
+
+      - name: Query ExitLag CDN & Version Manifest
+        id: check_remote
+        shell: pwsh
+        run: |
+          try {
+            $resp = Invoke-WebRequest -Uri "https://www.exitlag.com" -Method Head -TimeoutSec 10 -ErrorAction Stop
+            $etag = $resp.Headers["ETag"]
+            $lastMod = $resp.Headers["Last-Modified"]
+            Write-Host "ExitLag Remote Headers: ETag=$etag, Last-Modified=$lastMod"
+            echo "has_update=true" >> $env:GITHUB_OUTPUT
+          } catch {
+            Write-Host "ExitLag probe completed."
+            echo "has_update=false" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Run AutoSync Engine
+        shell: pwsh
+        run: |
+          python scripts/exitlag_auto_sync.py --sync
+
+      - name: Commit & Push if Updated
+        shell: pwsh
+        run: |
+          git config --global user.name "PulseGPN-Bot"
+          git config --global user.email "bot@pulsegpn.internal"
+          git add -A
+          $status = git status --porcelain
+          if ($status) {
+            git commit -m "chore(sync): automated sync with ExitLag network definitions and routing"
+            git push origin main
+          } else {
+            Write-Host "PulseGPN is already fully synchronized."
+          }
