@@ -1497,10 +1497,15 @@ class PulseGpnCore:
         loss = int(((count - len(rtts)) / count) * 100)
         return {"ip": target_ip, "min": round(min_p, 1), "avg": round(avg_p, 1), "max": round(max_p, 1), "jitter": round(jitter, 1), "loss": loss}
 
-    def probe_all_datacenters(self, local_ip="0.0.0.0", count=2, timeout=0.75):
+    def probe_all_datacenters(self, local_ip="0.0.0.0", count=2, timeout=0.75, progress_cb=None):
         """
         Warms up latency caches across all 35 verified global datacenters in parallel using ThreadPoolExecutor.
+        Supports live progress callbacks for real-time benchmark modals.
         """
+        completed = [0]
+        total = len(GLOBAL_DATACENTERS)
+        lock = threading.Lock()
+
         def _probe_one(dc):
             try:
                 res = self.probe_datacenter_latency(dc, local_ip=local_ip, count=count, timeout=timeout)
@@ -1508,6 +1513,15 @@ class PulseGpnCore:
                     self.cached_dc_pings[dc["dcId"]] = res
             except Exception:
                 pass
+            finally:
+                if progress_cb:
+                    with lock:
+                        completed[0] += 1
+                        try:
+                            progress_cb(completed[0], total, dc)
+                        except Exception:
+                            pass
+
         with ThreadPoolExecutor(max_workers=35) as executor:
             list(executor.map(_probe_one, GLOBAL_DATACENTERS))
 
@@ -2394,6 +2408,161 @@ class PulseGpnSplashScreen:
         except Exception:
             self.splash_q.put(("complete", None, None, None))
 
+class PulseGpnReprobeModal:
+    """
+    On-Demand Re-Probe Modal Window (styled identically to the initial startup splash screen).
+    Displays a 540x300 centered frameless cybernetic popup with animated progress bar (0% -> 100%)
+    and live telemetry diagnostic step labels while all 35 global transit points are measured in parallel.
+    """
+    def __init__(self, app_instance, game_obj, core, on_finish):
+        self.app_instance = app_instance
+        self.game_obj = game_obj
+        self.core = core
+        self.on_finish = on_finish
+        self.q = queue.Queue()
+
+        # Capture Tkinter state safely on the MAIN GUI thread
+        self.continent_filter = getattr(app_instance, "current_continent_filter", "ALL")
+        self.checked_ids = set(getattr(app_instance, "checked_dc_ids", set()))
+        try:
+            self.redundancy = int(app_instance.udp_routes_var.get())
+        except Exception:
+            self.redundancy = 2
+        try:
+            self.fn_lock = bool(app_instance.fn_subregion_lock_var.get())
+        except Exception:
+            self.fn_lock = True
+
+        self.win = tk.Toplevel(app_instance.root)
+        self.win.overrideredirect(True)
+        self.win.configure(bg="#0d1117")
+        self.win.attributes("-topmost", True)
+
+        sw = self.win.winfo_screenwidth()
+        sh = self.win.winfo_screenheight()
+        w, h = 540, 300
+        x = max(0, (sw - w) // 2)
+        y = max(0, (sh - h) // 2)
+        self.win.geometry(f"{w}x{h}+{x}+{y}")
+
+        border_f = tk.Frame(self.win, bg="#161b22", highlightthickness=1, highlightbackground="#30363d")
+        border_f.pack(fill="both", expand=True, padx=2, pady=2)
+
+        top_bar = tk.Frame(border_f, bg="#161b22")
+        top_bar.pack(fill="x", padx=22, pady=(22, 6))
+
+        tk.Label(top_bar, text="⚡ PULSEGPN", bg="#161b22", fg="#ff2247", font=("Segoe UI Black", 18, "bold")).pack(side="left")
+        tk.Label(top_bar, text="PRO v1.0", bg="#161b22", fg="#ffffff", font=("Segoe UI", 12, "bold")).pack(side="left", padx=(6, 0), pady=(4, 0))
+
+        self.status_pill = tk.Label(top_bar, text="● MEASURING ROUTES", bg="#0d2818", fg="#10b981", font=("Segoe UI", 8, "bold"), padx=10, pady=3)
+        self.status_pill.pack(side="right")
+
+        title_str = game_obj.get("title", game_obj.get("display", "Active Game"))[:40]
+        tk.Label(
+            border_f, text=f"BENCHMARKING 35 GLOBAL GATEWAYS // {title_str.upper()}",
+            bg="#161b22", fg="#8b949e", font=("Consolas", 8, "bold")
+        ).pack(anchor="w", padx=22, pady=(0, 18))
+
+        self.step_lbl = tk.Label(border_f, text="Probing 35 Global Datacenters...", bg="#161b22", fg="#ffffff", font=("Segoe UI", 10, "bold"))
+        self.step_lbl.pack(anchor="w", padx=22, pady=(2, 2))
+
+        self.sub_lbl = tk.Label(border_f, text="Dispatching hardware ICMP & TCP SYN packets...", bg="#161b22", fg="#58a6ff", font=("Consolas", 8))
+        self.sub_lbl.pack(anchor="w", padx=22, pady=(0, 14))
+
+        style = ttk.Style(self.win)
+        style.theme_use("clam")
+        style.configure(
+            "Reprobe.Horizontal.TProgressbar",
+            background="#ff2247",
+            troughcolor="#0d1117",
+            bordercolor="#30363d",
+            lightcolor="#ff2247",
+            darkcolor="#ff2247"
+        )
+
+        self.prog_var = tk.DoubleVar(value=5.0)
+        self.prog_bar = ttk.Progressbar(border_f, variable=self.prog_var, maximum=100, style="Reprobe.Horizontal.TProgressbar", length=492)
+        self.prog_bar.pack(fill="x", padx=22, pady=(0, 14))
+
+        footer = tk.Frame(border_f, bg="#161b22")
+        footer.pack(fill="x", side="bottom", padx=22, pady=12)
+        tk.Label(footer, text="Win32 IPHLPAPI QoS TOS 0xB8  |  Pure Unadulterated Measurement", bg="#161b22", fg="#484f58", font=("Consolas", 8)).pack(side="left")
+        self.pct_lbl = tk.Label(footer, text="5%", bg="#161b22", fg="#ff2247", font=("Consolas", 9, "bold"))
+        self.pct_lbl.pack(side="right")
+
+        threading.Thread(target=self._worker, daemon=True).start()
+        self.win.after(30, self._poll_queue)
+
+    def _worker(self):
+        try:
+            self.q.put(("progress", 8, "Initializing Hardware Probing Sockets...", "Win32 IPHLPAPI QoS TOS 0xB8 | Parallel ICMP / TCP SYN"))
+            time.sleep(0.08)
+
+            def on_dc_progress(done, total, dc):
+                pct = 8 + int((done / total) * 74.0)
+                c_p = self.core.cached_dc_pings.get(dc["dcId"], {})
+                p_val = f"{c_p.get('min'):.1f}ms" if "min" in c_p else "probe active"
+                self.q.put(("progress", pct, f"Benchmarking Gateway {done}/{total}: {dc['city']}...", f"Latency: {p_val} | Continent: {dc.get('continent', 'Global')}"))
+
+            self.core.probe_all_datacenters(count=2, timeout=0.85, progress_cb=on_dc_progress)
+
+            self.q.put(("progress", 86, "Calculating Latency & Route Matrices...", "Ranking all 35 datacenters by physical ping"))
+            ranked = self.core.analyze_all_routes_for_game(self.game_obj, continent_filter=self.continent_filter, live_probe=True)
+            time.sleep(0.12)
+
+            self.q.put(("progress", 94, "Configuring Routing Table & QoS Policies...", "Binding optimal primary gateway & redundant paths"))
+            checked_ids = set(self.checked_ids) if self.checked_ids else ({ranked[0]["dc"]["dcId"]} if ranked else {2129})
+            ranked_map = {r["dc"]["dcId"]: r["dc"] for r in ranked}
+            chosen_dcs = [ranked_map[dc_id] for dc_id in checked_ids if dc_id in ranked_map]
+            if not chosen_dcs:
+                chosen_dcs = [dc for dc in GLOBAL_DATACENTERS if dc["dcId"] in checked_ids]
+            primary_dc = chosen_dcs[0] if chosen_dcs else None
+
+            if primary_dc:
+                backup_dcs = chosen_dcs[1:] if len(chosen_dcs) > 1 else []
+                self.core.apply_specific_dc_route(primary_dc, backup_dcs, self.game_obj, redundancy=self.redundancy, lock_fn_subregion=self.fn_lock)
+
+            self.q.put(("progress", 100, "Route Optimization Complete!", "Applying routes and returning to viewport..."))
+            time.sleep(0.2)
+            self.q.put(("complete", ranked, checked_ids, primary_dc, self.game_obj))
+        except Exception as e:
+            self.q.put(("error", str(e)))
+
+    def _poll_queue(self):
+        try:
+            while True:
+                msg = self.q.get_nowait()
+                mtype = msg[0]
+                if mtype == "progress":
+                    _, pct, step, sub = msg
+                    self.prog_var.set(pct)
+                    self.step_lbl.config(text=step)
+                    self.sub_lbl.config(text=sub)
+                    self.pct_lbl.config(text=f"{int(pct)}%")
+                elif mtype == "complete":
+                    _, ranked, checked_ids, primary_dc, game_obj = msg
+                    try:
+                        self.win.destroy()
+                    except Exception:
+                        pass
+                    if self.on_finish:
+                        self.on_finish(ranked, checked_ids, primary_dc, game_obj)
+                    return
+                elif mtype == "error":
+                    try:
+                        self.win.destroy()
+                    except Exception:
+                        pass
+                    if self.on_finish:
+                        self.on_finish([], set(), None, self.game_obj)
+                    return
+        except queue.Empty:
+            pass
+        try:
+            self.win.after(30, self._poll_queue)
+        except Exception:
+            pass
+
 class PulseGpnApp:
     def __init__(self, root, core=None, all_games=None, installed_games=None):
         self.root = root
@@ -2422,6 +2591,8 @@ class PulseGpnApp:
         self._last_rendered_sample = 38.0
         self._last_loss = 0
         self.route_chk_buttons = {}
+        self.live_graph_active = True
+        self.active_reprobe_modal = None
         self.route_result_queue = queue.Queue()
         self.telemetry_sample_queue = queue.Queue(maxsize=40)
         threading.Thread(target=self._live_telemetry_prober_worker, daemon=True).start()
@@ -3179,7 +3350,22 @@ class PulseGpnApp:
         right_col = ttk.Frame(content_f, style="Card.TFrame")
         right_col.pack(side="left", fill="both", expand=True)
 
-        ttk.Label(right_col, text="REAL-TIME TELEMETRY & MULTIPATH TOPOLOGY (CLICK MATRIX ROW OR CHECKBOX TO LOCK ROUTE)", style="CyanTitle.TLabel").pack(anchor="w", padx=12, pady=(8, 4))
+        telemetry_hdr_f = tk.Frame(right_col, bg="#161b22")
+        telemetry_hdr_f.pack(fill="x", padx=12, pady=(8, 4))
+
+        ttk.Label(telemetry_hdr_f, text="REAL-TIME TELEMETRY & MULTIPATH TOPOLOGY (CLICK ROW/CHECKBOX TO LOCK ROUTE)", style="CyanTitle.TLabel").pack(side="left")
+
+        self.live_graph_toggle_btn = tk.Button(
+            telemetry_hdr_f,
+            text="⚡ LIVE GRAPH: ON",
+            bg="#0d2818", fg="#10b981",
+            activebackground="#161b22", activeforeground="#34d399",
+            font=("Consolas", 8, "bold"),
+            bd=1, relief="solid", highlightthickness=0,
+            padx=8, pady=2, cursor="hand2",
+            command=self.toggle_live_telemetry_graph
+        )
+        self.live_graph_toggle_btn.pack(side="right")
 
         self.graph_canvas = tk.Canvas(right_col, bg="#0d1117", height=155, highlightthickness=1, highlightbackground="#30363d")
         self.graph_canvas.pack(fill="x", padx=12, pady=(0, 8))
@@ -3636,15 +3822,53 @@ class PulseGpnApp:
     # --------------------------------------------------------------------------
     # TICKERS & REAL-TIME BACKGROUND MONITORING
     # --------------------------------------------------------------------------
+    def toggle_live_telemetry_graph(self):
+        """
+        Toggles real-time hardware telemetry graph prober and rendering loop.
+        When paused, halts background ICMP/TCP socket probing (0 network I/O)
+        and cancels drawing ticks (0 CPU usage).
+        """
+        self.live_graph_active = not getattr(self, "live_graph_active", True)
+        if self.live_graph_active:
+            if hasattr(self, "live_graph_toggle_btn"):
+                self.live_graph_toggle_btn.config(
+                    text="⚡ LIVE GRAPH: ON",
+                    bg="#0d2818", fg="#10b981",
+                    activeforeground="#34d399"
+                )
+            self.append_log("[Telemetry] Live graph resumed. Probing gateway in real-time.")
+            self._telemetry_graph_tick()
+        else:
+            if hasattr(self, "live_graph_toggle_btn"):
+                self.live_graph_toggle_btn.config(
+                    text="⏸ LIVE GRAPH: PAUSED",
+                    bg="#21262d", fg="#f59e0b",
+                    activeforeground="#fbbf24"
+                )
+            self.append_log("[Telemetry] Live graph paused to conserve resources (prober & drawing halted).")
+            # Render clean static paused notification on canvas
+            c = self.graph_canvas
+            w = c.winfo_width() or 680
+            h = c.winfo_height() or 155
+            c.delete("all")
+            for y_pct in (0.25, 0.5, 0.75):
+                y = int(h * y_pct)
+                c.create_line(0, y, w, y, fill="#1c2128", dash=(3, 3))
+            c.create_text(w // 2, h // 2 - 8, text="⏸ REAL-TIME GRAPH PAUSED (RESOURCE SAVER ACTIVE)", fill="#8b949e", font=("Segoe UI", 11, "bold"))
+            c.create_text(w // 2, h // 2 + 16, text="Hardware ICMP/TCP Prober Halted · Zero Network & CPU Overhead · Click [LIVE GRAPH] to Resume", fill="#484f58", font=("Consolas", 8))
+
     def _live_telemetry_prober_worker(self):
         """
         Continuous real-time hardware telemetry prober for the active connection.
         Sends live native ICMP Echo (TOS 0xB8) / TCP SYN packets directly
         to the active primary gateway every ~450ms.
-        Guarantees non-stop fluid telemetry stream that immediately reflects
-        physical network bufferbloat and load during speedtests.
+        When live_graph_active is False, halts all socket operations to save resources.
         """
         while True:
+            if not getattr(self, "live_graph_active", True):
+                time.sleep(0.5)
+                continue
+
             try:
                 target_dc = getattr(self, "current_primary_dc", None)
                 if not target_dc and GLOBAL_DATACENTERS:
@@ -3686,50 +3910,28 @@ class PulseGpnApp:
 
     def run_reprobe_all_routes_ui(self):
         """
-        Executes on-demand benchmark across all 35 datacenters.
-        Displays loading modal with animated progress bar while measuring all gateways,
-        then smoothly updates the 35-route matrix and hides the loading bar.
+        Executes on-demand benchmark across all 35 datacenters for any selected game.
+        Displays dedicated loading modal window (identical to initial startup splash screen).
         """
         if not self.selected_game_obj:
             return
         g = self.selected_game_obj
-        title = g.get("title", g.get("display", "Game"))
 
-        self.show_route_loading(
-            title="RE-MEASURING ALL 35 GLOBAL DATACENTERS",
-            game_name=f"{title} ({g.get('exe', 'game.exe')})",
-            details="Executing Hardware ICMP (TOS 0xB8) & TCP SYN Handshakes | Analyzing All 35 Transit Points"
-        )
-
-        def worker():
-            try:
-                # 1. Parallel hardware probe across all 35 datacenters
-                self.core.probe_all_datacenters(count=2, timeout=0.85)
-
-                # 2. Analyze routes with unadulterated metrics
-                cont = getattr(self, "current_continent_filter", "ALL")
-                ranked = self.core.analyze_all_routes_for_game(g, continent_filter=cont, live_probe=True)
-
-                # 3. Preserve manual selections
-                checked_ids = set(self.checked_dc_ids) if self.checked_dc_ids else ({ranked[0]["dc"]["dcId"]} if ranked else {2129})
-                ranked_map = {r["dc"]["dcId"]: r["dc"] for r in ranked}
-                chosen_dcs = [ranked_map[dc_id] for dc_id in checked_ids if dc_id in ranked_map]
-                if not chosen_dcs:
-                    chosen_dcs = [dc for dc in GLOBAL_DATACENTERS if dc["dcId"] in checked_ids]
-                primary_dc = chosen_dcs[0] if chosen_dcs else None
-
+        def on_finish(ranked, checked_ids, primary_dc, game_obj):
+            self.active_reprobe_modal = None
+            if ranked:
+                self.ranked_routes_cache = ranked
+                self.checked_dc_ids = checked_ids
+                self._rebuild_center_route_checkboxes(ranked)
+                self._rebuild_matrix_tree(ranked)
                 if primary_dc:
-                    redundancy = int(self.udp_routes_var.get()) if hasattr(self, "udp_routes_var") else 2
-                    fn_lock = self.fn_subregion_lock_var.get() if hasattr(self, "fn_subregion_lock_var") else True
-                    backup_dcs = chosen_dcs[1:] if len(chosen_dcs) > 1 else []
-                    self.core.apply_specific_dc_route(primary_dc, backup_dcs, g, redundancy=redundancy, lock_fn_subregion=fn_lock)
+                    self._update_primary_dc_ui(primary_dc, game_obj)
+                self.append_log(
+                    f"[RouteEngine] Re-probe benchmark complete: All 35 datacenters measured for '{game_obj.get('title')}'. "
+                    f"Selected Gateway: #{primary_dc['dcId']} {primary_dc['city']} ({primary_dc.get('min', 0):.1f} ms)."
+                )
 
-                time.sleep(0.3)
-                self.route_result_queue.put(("reprobe_complete", ranked, checked_ids, primary_dc, g))
-            except Exception as e:
-                self.route_result_queue.put(("reprobe_error", str(e)))
-
-        threading.Thread(target=worker, daemon=True).start()
+        self.active_reprobe_modal = PulseGpnReprobeModal(self, g, self.core, on_finish)
 
     def _update_matrix_tree_live_values(self, ranked):
         row_map = {}
@@ -3783,6 +3985,9 @@ class PulseGpnApp:
                     pass
 
     def _telemetry_graph_tick(self):
+        if not getattr(self, "live_graph_active", True):
+            return  # Stop drawing loop when paused to conserve CPU
+
         c = self.graph_canvas
         w = c.winfo_width() or 680
         h = c.winfo_height() or 155
