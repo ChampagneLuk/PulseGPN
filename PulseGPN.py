@@ -110,7 +110,7 @@ FORTNITE_QOS_DATACENTERS = {
 GLOBAL_DATACENTERS = [
     # --- NORTH AMERICA & LATAM NORTH (NA) ---
     {"dcId": 2129, "continent": "NA", "country": "US", "city": "Ashburn", "region": "US East (Ashburn, Virginia) [FN: VA]", "ip": "44.192.142.31", "probe_host": "44.192.142.31", "port": 443, "fn_sub": "VA", "subnets": ["44.192.142.0/24", "44.192.143.0/24", "44.198.247.0/24", "3.237.229.0/24", "192.207.0.0/24", "52.94.0.0/24"]},
-    {"dcId": 2133, "continent": "NA", "country": "US", "city": "Miami", "region": "US South (Miami, FL) [FN: VA/East]", "ip": "104.160.131.3", "probe_host": "104.160.131.3", "port": 443, "fn_sub": "VA", "subnets": ["104.160.131.0/24", "44.192.142.0/24", "3.237.229.0/24", "192.207.0.0/24"]},
+    {"dcId": 2133, "continent": "NA", "country": "US", "city": "Miami", "region": "US South (Miami, FL) [FN: VA/East]", "ip": "104.160.131.3", "probe_host": "172.67.180.1", "port": 443, "fn_sub": "VA", "subnets": ["104.160.131.0/24", "44.192.142.0/24", "3.237.229.0/24", "192.207.0.0/24"]},
     {"dcId": 3565, "continent": "NA", "country": "US", "city": "Atlanta", "region": "US South-East (Atlanta, GA) [FN: VA]", "ip": "104.160.131.1", "probe_host": "44.192.143.151", "port": 443, "fn_sub": "VA", "subnets": ["104.160.128.0/24", "44.192.143.0/24", "3.237.229.0/24"]},
     {"dcId": 2131, "continent": "NA", "country": "US", "city": "Dallas", "region": "US Central (Dallas, Texas) [FN: TX]", "ip": "18.88.1.126", "probe_host": "18.88.1.126", "port": 443, "fn_sub": "TX", "subnets": ["18.88.1.0/24", "104.160.136.0/24", "13.107.42.0/24", "162.254.194.0/24"]},
     {"dcId": 2138, "continent": "NA", "country": "US", "city": "Columbus", "region": "US East-Central (Columbus, Ohio) [FN: OH]", "ip": "3.129.132.110", "probe_host": "3.129.132.110", "port": 443, "fn_sub": "OH", "subnets": ["3.129.132.0/24", "35.71.102.0/24", "3.146.11.0/24"]},
@@ -2415,6 +2415,8 @@ class PulseGpnApp:
         self.route_chk_vars = {}
         self.icon_cache = {}
         self.route_result_queue = queue.Queue()
+        self.telemetry_sample_queue = queue.Queue(maxsize=20)
+        threading.Thread(target=self._live_telemetry_prober_worker, daemon=True).start()
 
         # Default to MANUAL ROUTING by user specification
         self.manual_mode_var = tk.BooleanVar(value=True)
@@ -3605,57 +3607,120 @@ class PulseGpnApp:
     # --------------------------------------------------------------------------
     # TICKERS & REAL-TIME BACKGROUND MONITORING
     # --------------------------------------------------------------------------
+    def _live_telemetry_prober_worker(self):
+        """
+        Dedicated background hardware prober sending continuous live physical ICMP/TCP packets
+        directly to the active primary gateway. Reflects genuine physical network load, latency spikes,
+        bufferbloat during speedtests, and true carrier routing changes in real time.
+        """
+        while True:
+            try:
+                target_dc = getattr(self, "current_primary_dc", None)
+                if target_dc:
+                    probe_target = target_dc.get("probe_host") or target_dc.get("ip") or "1.1.1.1"
+                    # 1. Native ICMP Echo Request with DSCP 46 Expedited Forwarding TOS 0xB8
+                    rtts = self.core.icmp_prober.ping_ip(probe_target, count=1, timeout_ms=450)
+                    if rtts and rtts[0] < 900:
+                        sample = float(rtts[0])
+                        loss = 0
+                    else:
+                        # 2. Non-blocking TCP SYN handshake probe to port 443
+                        res = self.core.probe_datacenter_latency(target_dc, count=1, timeout=0.45)
+                        if res["min"] < 900:
+                            sample = float(res["min"])
+                            loss = 0
+                        else:
+                            sample = 999.0
+                            loss = 100
+
+                    try:
+                        self.telemetry_sample_queue.put_nowait((sample, loss))
+                    except queue.Full:
+                        try:
+                            self.telemetry_sample_queue.get_nowait()
+                            self.telemetry_sample_queue.put_nowait((sample, loss))
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            time.sleep(0.55)
+
     def _telemetry_graph_tick(self):
         c = self.graph_canvas
         w = c.winfo_width() or 680
         h = c.winfo_height() or 155
         c.delete("all")
 
-        # Grid lines
-        for y_pct in (0.25, 0.5, 0.75):
-            y = int(h * y_pct)
-            c.create_line(0, y, w, y, fill="#1c2128", dash=(3, 3))
-            ms_lbl = int(120 * (1.0 - y_pct))
-            c.create_text(26, y - 6, text=f"{ms_lbl}ms", fill="#484f58", font=("Consolas", 7))
+        # Drain latest real physical samples from live telemetry prober queue
+        latest_sample = None
+        latest_loss = 0
+        try:
+            while True:
+                s, l = self.telemetry_sample_queue.get_nowait()
+                if s < 900:
+                    latest_sample = s
+                    latest_loss = l
+        except queue.Empty:
+            pass
 
-        target_dc = self.current_primary_dc
-        base_val = target_dc.get("min", 56.0) if target_dc else 56.0
-        if isinstance(base_val, dict):
-            base_ping = float(base_val.get("min", 56.0))
-        else:
-            try:
-                base_ping = float(base_val)
-            except Exception:
-                base_ping = 56.0
-        jitter = random.uniform(-1.2, 1.4)
-        sample = max(12.0, base_ping + jitter)
-        self.ping_history.append(sample)
+        if latest_sample is not None:
+            self.ping_history.append(latest_sample)
+        elif not self.ping_history:
+            self.ping_history.append(38.0)
 
         pts = list(self.ping_history)
         n = len(pts)
         step = (w - 20) / max(1, n - 1)
         coords = []
+
+        # Dynamic graph ceiling: automatically expands if latency spikes during speedtests up to 350ms!
+        max_seen = max(pts) if pts else 60.0
+        graph_ceiling = 350.0 if max_seen > 120.0 else 120.0
+
+        # Grid lines
+        for y_pct in (0.25, 0.5, 0.75):
+            y = int(h * y_pct)
+            c.create_line(0, y, w, y, fill="#1c2128", dash=(3, 3))
+            ms_lbl = int(graph_ceiling * (1.0 - y_pct))
+            c.create_text(26, y - 6, text=f"{ms_lbl}ms", fill="#484f58", font=("Consolas", 7))
+
         for i, val in enumerate(pts):
             x = 10 + i * step
-            norm = min(1.0, max(0.0, val / 120.0))
+            norm = min(1.0, max(0.0, val / graph_ceiling))
             y = h - 20 - norm * (h - 40)
             coords.extend([x, y])
 
+        curr_p = pts[-1]
+        line_color = "#10b981" if curr_p < 80.0 else ("#f59e0b" if curr_p < 140.0 else "#ff2247")
+        poly_color = "#0d2818" if curr_p < 80.0 else ("#2d240d" if curr_p < 140.0 else "#2d0d12")
+
         if len(coords) >= 4:
             poly_coords = [coords[0], h - 15] + coords + [coords[-2], h - 15]
-            c.create_polygon(poly_coords, fill="#0d2818", outline="")
-            c.create_line(coords, fill="#10b981", width=2, smooth=True)
+            c.create_polygon(poly_coords, fill=poly_color, outline="")
+            c.create_line(coords, fill=line_color, width=2, smooth=True)
 
         avg_p = sum(pts) / len(pts)
         max_p = max(pts)
         min_p = min(pts)
         jitter_calc = abs(pts[-1] - pts[-2]) if len(pts) >= 2 else 0.5
 
-        info_str = f"LATENCY: {pts[-1]:.1f}ms  |  AVG: {avg_p:.1f}ms  |  MIN: {min_p:.1f}ms  |  MAX: {max_p:.1f}ms  |  JITTER: ±{jitter_calc:.1f}ms  |  LOSS: 0.0%"
-        c.create_text(w // 2, 14, text=info_str, fill="#38bdf8", font=("Consolas", 9, "bold"))
+        info_str = f"LATENCY: {curr_p:.1f}ms  |  AVG: {avg_p:.1f}ms  |  MIN: {min_p:.1f}ms  |  MAX: {max_p:.1f}ms  |  JITTER: ±{jitter_calc:.1f}ms  |  LOSS: {latest_loss}%"
+        status_color = "#38bdf8" if curr_p < 80 else ("#f59e0b" if curr_p < 140 else "#ff2247")
+        c.create_text(w // 2, 14, text=info_str, fill=status_color, font=("Consolas", 9, "bold"))
 
-        self.live_ping_badge.config(text=f"CURRENT LATENCY: {pts[-1]:.1f} ms")
-        self.root.after(800, self._telemetry_graph_tick)
+        badge_bg = "#0d2818" if curr_p < 80 else ("#2d240d" if curr_p < 140 else "#2d0d12")
+        badge_fg = "#10b981" if curr_p < 80 else ("#f59e0b" if curr_p < 140 else "#ff2247")
+        self.live_ping_badge.config(text=f"CURRENT LATENCY: {curr_p:.1f} ms", bg=badge_bg, fg=badge_fg)
+
+        if hasattr(self, "hdr_pill") and self.selected_game_obj and self.current_primary_dc:
+            g_exe = self.selected_game_obj.get("exe", "game.exe")
+            reg = self.current_primary_dc.get("region", "Datacenter")
+            self.hdr_pill.config(
+                text=f"● ROUTING: {g_exe} ──► {reg} ({curr_p:.1f} ms)",
+                bg=badge_bg, fg=badge_fg
+            )
+
+        self.root.after(600, self._telemetry_graph_tick)
 
     def fortnite_live_match_watcher_tick(self):
         info = self.core.parse_fortnite_live_log_server_and_pings()
