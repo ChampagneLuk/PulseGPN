@@ -2081,7 +2081,7 @@ class PulseGpnCore:
                 except Exception:
                     pass
 
-        ranked.sort(key=lambda x: x["score"])
+        ranked.sort(key=lambda x: (x.get("min", 999.0) if x.get("min", 999.0) < 900 else 99999.0, x.get("avg", 999.0), x.get("score", 999.0)))
 
         for i, item in enumerate(ranked):
             if i == 0:
@@ -3347,6 +3347,8 @@ class PulseGpnApp:
         self.route_chk_vars = {}
         self.icon_cache = {}
         self.current_continent_filter = "ALL"
+        self.current_sort_col = "min"
+        self.current_sort_reverse = False
         self._last_rendered_sample = 38.0
         self._last_loss = 0
         self.route_chk_buttons = {}
@@ -3833,8 +3835,7 @@ class PulseGpnApp:
                     if gen == self._analysis_generation:
                         self.ranked_routes_cache = ranked
                         self.checked_dc_ids = checked_ids
-                        self._rebuild_center_route_checkboxes(ranked)
-                        self._rebuild_matrix_tree(ranked)
+                        self._apply_current_sort_and_render()
                         if primary_dc:
                             self._update_primary_dc_ui(primary_dc, game_obj)
                         self.hide_route_loading()
@@ -3846,8 +3847,7 @@ class PulseGpnApp:
                     _, ranked, checked_ids, primary_dc, game_obj = msg
                     self.ranked_routes_cache = ranked
                     self.checked_dc_ids = checked_ids
-                    self._rebuild_center_route_checkboxes(ranked)
-                    self._rebuild_matrix_tree(ranked)
+                    self._apply_current_sort_and_render()
                     if primary_dc:
                         self._update_primary_dc_ui(primary_dc, game_obj)
                     self.hide_route_loading()
@@ -3983,6 +3983,113 @@ class PulseGpnApp:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def toggle_ping_sort_order(self):
+        """
+        Toggles ping sort direction (Menor a Mayor ▲ <-> Mayor a Menor ▼).
+        """
+        if self.current_sort_col == "min":
+            self.current_sort_reverse = not self.current_sort_reverse
+        else:
+            self.current_sort_col = "min"
+            self.current_sort_reverse = False
+        self._apply_current_sort_and_render()
+
+    def sort_matrix_by_column(self, col_id):
+        """
+        Interactive column header sort handler for 35 Datacenters Matrix.
+        """
+        if not self.ranked_routes_cache:
+            return
+        if self.current_sort_col == col_id:
+            self.current_sort_reverse = not self.current_sort_reverse
+        else:
+            self.current_sort_col = col_id
+            self.current_sort_reverse = False
+        self._apply_current_sort_and_render()
+
+    def _apply_current_sort_and_render(self):
+        """
+        Sorts self.ranked_routes_cache by self.current_sort_col and self.current_sort_reverse,
+        updates column header labels with sort arrows, and re-renders both matrix table and left checklist.
+        """
+        if not self.ranked_routes_cache:
+            return
+
+        col = getattr(self, "current_sort_col", "min")
+        rev = getattr(self, "current_sort_reverse", False)
+
+        def get_key(r):
+            dc = r.get("dc", {})
+            dc_id = dc.get("dcId", 0)
+            is_chk = dc_id in self.checked_dc_ids
+
+            if col == "min":
+                val = r.get("min", 999.0)
+                # Keep unreachable/999 at bottom in ascending mode
+                s_val = val if val < 900 else (0.0 if rev else 99999.0)
+                return (s_val, r.get("avg", 999.0))
+            elif col == "avg":
+                val = r.get("avg", 999.0)
+                s_val = val if val < 900 else (0.0 if rev else 99999.0)
+                return (s_val, r.get("min", 999.0))
+            elif col == "score":
+                return r.get("score", 999.0)
+            elif col == "jitter":
+                return r.get("jitter", 0.0)
+            elif col == "dc":
+                return dc_id
+            elif col == "region":
+                return dc.get("region", "").lower()
+            elif col == "ip":
+                return dc.get("ip", "")
+            elif col == "subnets":
+                return dc.get("subnets_tag", "")
+            elif col == "chk":
+                return 0 if is_chk else 1
+            elif col == "rank":
+                pri_id = self.current_primary_dc.get("dcId") if self.current_primary_dc else None
+                backup_ids = [b.get("dcId") for b in (self.current_backups or [])]
+                if dc_id == pri_id:
+                    return 0
+                elif dc_id in backup_ids:
+                    return 1
+                return 2
+            return r.get("min", 999.0)
+
+        self.ranked_routes_cache.sort(key=get_key, reverse=rev)
+
+        column_base_titles = {
+            "chk": "☑ Manual",
+            "rank": "Multipath Role",
+            "dc": "DC ID",
+            "region": "Region / Datacenter [Subregion / Role]",
+            "ip": "Gateway / QoS IP",
+            "subnets": "Subnets / QoS Tag",
+            "min": "Min (ms)",
+            "avg": "Avg (ms)",
+            "jitter": "Jitter",
+            "score": "Score",
+        }
+
+        if hasattr(self, "tree"):
+            for c_id, base_text in column_base_titles.items():
+                if c_id == col:
+                    arrow = " ▼" if rev else " ▲"
+                    display_text = f"{base_text}{arrow}"
+                else:
+                    display_text = base_text
+                self.tree.heading(c_id, text=display_text, command=lambda c=c_id: self.sort_matrix_by_column(c))
+
+        if hasattr(self, "sort_ping_btn"):
+            if col == "min":
+                btn_txt = "📶 PING: MAYOR ▼" if rev else "📶 PING: MENOR ▲"
+                self.sort_ping_btn.config(text=btn_txt, fg="#f59e0b" if rev else "#38bdf8")
+            else:
+                self.sort_ping_btn.config(text=f"📶 ORDEN: {col.upper()}", fg="#8b949e")
+
+        self._rebuild_matrix_tree(self.ranked_routes_cache)
+        self._rebuild_center_route_checkboxes(self.ranked_routes_cache)
+
     def _rebuild_matrix_tree(self, ranked):
         for item in self.tree.get_children():
             self.tree.delete(item)
@@ -3993,10 +4100,13 @@ class PulseGpnApp:
             is_chk = dc_id in self.checked_dc_ids
             chk_str = "[✔]" if is_chk else "[  ]"
 
-            if idx == 0:
+            pri_id = self.current_primary_dc.get("dcId") if self.current_primary_dc else None
+            backup_ids = [b.get("dcId") for b in (self.current_backups or [])]
+            if dc_id == pri_id:
                 role = "★ PRIMARY"
-            elif idx in (1, 2):
-                role = f"⚡ BACKUP #{idx}"
+            elif dc_id in backup_ids:
+                b_idx = backup_ids.index(dc_id) + 1
+                role = f"⚡ BACKUP #{b_idx}"
             else:
                 role = f"ALT #{idx+1}"
 
@@ -4149,7 +4259,21 @@ class PulseGpnApp:
         cont_cb.bind("<<ComboboxSelected>>", lambda e: self._on_continent_filter_change())
 
         # Scrollable Checkbox List for Datacenters
-        ttk.Label(left_col, text="☑ SELECT DATACENTER ROUTE (CLICK TO LOCK):", style="CardTitle.TLabel").pack(anchor="w", padx=12, pady=(8, 2))
+        chk_hdr_f = tk.Frame(left_col, bg="#161b22")
+        chk_hdr_f.pack(fill="x", padx=12, pady=(8, 2))
+        ttk.Label(chk_hdr_f, text="☑ SELECT ROUTE (CLICK TO LOCK):", style="CardTitle.TLabel").pack(side="left")
+
+        self.sort_ping_btn = tk.Button(
+            chk_hdr_f,
+            text="📶 PING: MENOR ▲",
+            bg="#0d1117", fg="#38bdf8",
+            activebackground="#161b22", activeforeground="#ffffff",
+            font=("Consolas", 8, "bold"),
+            bd=1, relief="solid", highlightthickness=0,
+            padx=6, pady=1, cursor="hand2",
+            command=self.toggle_ping_sort_order
+        )
+        self.sort_ping_btn.pack(side="right")
 
         chk_container = tk.Frame(left_col, bg="#0d1117", highlightthickness=1, highlightbackground="#30363d")
         chk_container.pack(fill="both", expand=True, padx=12, pady=2)
@@ -4224,16 +4348,16 @@ class PulseGpnApp:
 
         cols = ("chk", "rank", "dc", "region", "ip", "subnets", "min", "avg", "jitter", "score")
         self.tree = ttk.Treeview(right_col, columns=cols, show="headings", height=12)
-        self.tree.heading("chk", text="☑ Manual")
-        self.tree.heading("rank", text="Multipath Role")
-        self.tree.heading("dc", text="DC ID")
-        self.tree.heading("region", text="Region / Datacenter [Subregion / Role]")
-        self.tree.heading("ip", text="Gateway / QoS IP")
-        self.tree.heading("subnets", text="Subnets / QoS Tag")
-        self.tree.heading("min", text="Min (ms)")
-        self.tree.heading("avg", text="Avg (ms)")
-        self.tree.heading("jitter", text="Jitter")
-        self.tree.heading("score", text="Score")
+        self.tree.heading("chk", text="☑ Manual", command=lambda: self.sort_matrix_by_column("chk"))
+        self.tree.heading("rank", text="Multipath Role", command=lambda: self.sort_matrix_by_column("rank"))
+        self.tree.heading("dc", text="DC ID", command=lambda: self.sort_matrix_by_column("dc"))
+        self.tree.heading("region", text="Region / Datacenter [Subregion / Role]", command=lambda: self.sort_matrix_by_column("region"))
+        self.tree.heading("ip", text="Gateway / QoS IP", command=lambda: self.sort_matrix_by_column("ip"))
+        self.tree.heading("subnets", text="Subnets / QoS Tag", command=lambda: self.sort_matrix_by_column("subnets"))
+        self.tree.heading("min", text="Min (ms) ▲", command=lambda: self.sort_matrix_by_column("min"))
+        self.tree.heading("avg", text="Avg (ms)", command=lambda: self.sort_matrix_by_column("avg"))
+        self.tree.heading("jitter", text="Jitter", command=lambda: self.sort_matrix_by_column("jitter"))
+        self.tree.heading("score", text="Score", command=lambda: self.sort_matrix_by_column("score"))
 
         self.tree.column("chk", width=72, anchor="center")
         self.tree.column("rank", width=105, anchor="center")
