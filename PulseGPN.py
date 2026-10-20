@@ -32,7 +32,7 @@ import threading
 import time
 import winreg
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog
 
 try:
     import pystray
@@ -494,8 +494,142 @@ class PulseGpnCore:
         self.traffic_shaper_limits = {}
         self.system_telemetry_active = False
         self.system_telemetry_pid = None
+        self.custom_game_paths = {}
+        self.load_custom_game_paths()
         self.sync_from_storage_db()
         self.detect_conflicting_gpn_process()
+
+    def _get_pulse_db_conn(self):
+        db_dir = os.path.expandvars(r"%LOCALAPPDATA%\PulseGPN")
+        try:
+            os.makedirs(db_dir, exist_ok=True)
+        except Exception:
+            pass
+        p_db = os.path.join(db_dir, "pulse_storage.db")
+        conn = sqlite3.connect(p_db)
+        return conn
+
+    def _init_custom_paths_table(self):
+        try:
+            conn = self._get_pulse_db_conn()
+            c = conn.cursor()
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS custom_game_paths (
+                    slug TEXT PRIMARY KEY,
+                    title TEXT,
+                    exe TEXT,
+                    full_path TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            self.log(f"[StorageDB] Note init custom table: {e}")
+
+    def save_custom_game_path(self, slug, title, exe, full_path):
+        self._init_custom_paths_table()
+        try:
+            conn = self._get_pulse_db_conn()
+            c = conn.cursor()
+            c.execute("""
+                INSERT OR REPLACE INTO custom_game_paths (slug, title, exe, full_path, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, (slug, title, exe, full_path))
+            conn.commit()
+            conn.close()
+            self.custom_game_paths[slug] = {"exe": exe, "full_path": full_path, "title": title}
+            self.log(f"[StorageDB] Guardada ruta personalizada para '{title}': {full_path}")
+        except Exception as e:
+            self.log(f"[StorageDB] Error al guardar ruta: {e}")
+
+    def load_custom_game_paths(self):
+        self._init_custom_paths_table()
+        loaded = {}
+        try:
+            conn = self._get_pulse_db_conn()
+            c = conn.cursor()
+            c.execute("SELECT slug, title, exe, full_path FROM custom_game_paths")
+            for row in c.fetchall():
+                s, t, e, fp = row
+                if fp and os.path.exists(fp):
+                    loaded[s] = {"title": t, "exe": e, "full_path": fp}
+            conn.close()
+        except Exception:
+            pass
+        self.custom_game_paths = loaded
+        return loaded
+
+    def find_primary_executable_in_dir(self, install_dir, slug=None, default_exe=None):
+        """
+        Recursively discovers the true physical gaming binary (e.g. cs2.exe, BloodStrike.exe)
+        nested inside multi-level game installation directories (game/bin/win64, Engine/Binaries/Win64, etc.).
+        """
+        if not install_dir or not os.path.exists(install_dir):
+            return None
+        if os.path.isfile(install_dir) and install_dir.lower().endswith(".exe"):
+            return os.path.normpath(install_dir)
+
+        known_slug_map = {
+            "counter-strike_2": ["cs2.exe", "csgo.exe"],
+            "counterstrike2": ["cs2.exe", "csgo.exe"],
+            "cs2": ["cs2.exe", "csgo.exe"],
+            "bloodstrike": ["bloodstrike.exe"],
+            "fortnite": ["fortniteclient-win64-shipping.exe"],
+            "valorant": ["valorant-win64-shipping.exe"],
+            "teamfight_tactics": ["league of legends.exe", "leagueclient.exe"],
+            "league_of_legends": ["league of legends.exe", "leagueclient.exe"],
+            "rocket_league": ["rocketleague.exe"],
+            "rocketleague": ["rocketleague.exe"],
+            "fall_guys": ["fallguys_client.exe"],
+            "gta5": ["gta5.exe", "playgtav.exe"],
+            "apex_legends": ["r5apex.exe"],
+            "rainbow_six_siege": ["rainbowsix.exe", "rainbowsix_vulkan.exe"],
+            "overwatch_2": ["overwatch.exe"],
+            "call_of_duty": ["cod.exe", "bootstrapper.exe"]
+        }
+
+        candidates = []
+        slug_key = (slug or "").lower().replace("-", "_")
+        if slug_key in known_slug_map:
+            candidates.extend(known_slug_map[slug_key])
+        if default_exe:
+            candidates.append(default_exe.lower())
+
+        found_matches = []
+        all_exes = []
+        try:
+            for root, dirs, files in os.walk(install_dir):
+                rel = os.path.relpath(root, install_dir)
+                if rel != "." and rel.count(os.sep) >= 4:
+                    dirs.clear()
+                    continue
+                for f in files:
+                    if f.lower().endswith(".exe"):
+                        full_path = os.path.normpath(os.path.join(root, f))
+                        all_exes.append(full_path)
+                        f_lower = f.lower()
+                        for c in candidates:
+                            if f_lower == c:
+                                found_matches.append(full_path)
+        except Exception:
+            pass
+
+        if found_matches:
+            win64 = [m for m in found_matches if "win64" in m.lower() or "x64" in m.lower() or "shipping" in m.lower()]
+            return win64[0] if win64 else found_matches[0]
+
+        if all_exes:
+            filtered = [
+                e for e in all_exes
+                if not any(x in os.path.basename(e).lower() for x in ["unins", "crash", "reporter", "helper", "update", "setup", "unitycrash", "easyanticheat_setup"])
+            ]
+            if filtered:
+                win64 = [m for m in filtered if "win64" in m.lower() or "x64" in m.lower() or "shipping" in m.lower()]
+                return win64[0] if win64 else filtered[0]
+            return all_exes[0]
+
+        return None
 
     def detect_conflicting_gpn_process(self):
         try:
@@ -794,34 +928,101 @@ class PulseGpnCore:
     def resolve_game_executable_paths(self, game_obj_or_exe):
         r"""
         Resolves the absolute disk paths for a game's main executable and any child shipping/anti-cheat binaries.
-        Searches:
-          1. Live running processes via psutil
-          2. Windows Registry App Paths (HKLM/HKCU \ SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths)
-          3. Epic Games Manifests (C:\ProgramData\Epic\EpicGamesLauncher\Data\Manifests\*.item)
-          4. Common standard gaming directories (Epic, Steam, Riot, etc.)
-          5. System PATH via shutil.which
+        Prioritizes:
+          0. User-defined custom executable paths from storage.db
+          1. Direct installed_path (with recursive sub-directory executable resolution)
+          2. Live running processes via psutil
+          3. Multi-drive Steam common libraries (discovering cs2.exe, BloodStrike.exe, etc.)
+          4. Windows Registry App Paths (HKLM/HKCU \ SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths)
+          5. Epic / Riot / Standard gaming directories
+          6. System PATH via shutil.which
         """
         if isinstance(game_obj_or_exe, dict):
+            slug = game_obj_or_exe.get("slug", "")
+            # 0. Check custom saved path first!
+            if slug in self.custom_game_paths:
+                cp = self.custom_game_paths[slug].get("full_path")
+                if cp and os.path.exists(cp):
+                    return [os.path.normpath(cp)]
+
+            # 1. Check direct installed_path
+            inst_p = game_obj_or_exe.get("installed_path")
+            if inst_p:
+                if os.path.isfile(inst_p):
+                    return [os.path.normpath(inst_p)]
+                elif os.path.isdir(inst_p):
+                    found = self.find_primary_executable_in_dir(inst_p, slug=slug, default_exe=game_obj_or_exe.get("exe"))
+                    if found and os.path.isfile(found):
+                        return [found]
+
             primary_exe = game_obj_or_exe.get("exe", "game.exe")
             target_exes = [primary_exe] + list(game_obj_or_exe.get("extra_exes", []))
+            slug_key = slug.lower().replace("-", "_")
+            if "counter" in slug_key or slug_key == "cs2":
+                target_exes.extend(["cs2.exe", "csgo.exe"])
+            elif "blood" in slug_key:
+                target_exes.extend(["BloodStrike.exe"])
         else:
+            slug = ""
+            slug_key = ""
             target_exes = [str(game_obj_or_exe)]
 
         resolved_paths = []
         target_names_lower = {e.lower(): e for e in target_exes if e}
 
-        # 1. Inspect live running processes
+        # 2. Inspect live running processes
         try:
             for p in psutil.process_iter(['name', 'exe']):
                 p_name = (p.info.get('name') or '').lower()
                 if p_name in target_names_lower:
                     full_p = p.info.get('exe')
                     if full_p and os.path.exists(full_p) and full_p not in resolved_paths:
-                        resolved_paths.append(full_p)
+                        resolved_paths.append(os.path.normpath(full_p))
         except Exception:
             pass
 
-        # 2. Windows App Paths registry
+        if resolved_paths:
+            return resolved_paths
+
+        # 3. Check Steam common library folders across all mounted drives
+        steam_common_dirs = [
+            r"C:\Program Files\steam\steamapps\common",
+            r"C:\Program Files (x86)\Steam\steamapps\common",
+            r"D:\SteamLibrary\steamapps\common",
+            r"E:\SteamLibrary\steamapps\common",
+            r"F:\SteamLibrary\steamapps\common",
+        ]
+        for sc in steam_common_dirs:
+            if os.path.exists(sc):
+                try:
+                    for folder in os.listdir(sc):
+                        f_lower = folder.lower()
+                        if isinstance(game_obj_or_exe, dict):
+                            title_part = game_obj_or_exe.get("title", "").split("(")[0].strip().lower()
+                            if title_part in f_lower or f_lower in title_part or ("counter" in slug_key and "counter" in f_lower) or ("blood" in slug_key and "blood" in f_lower):
+                                full_dir = os.path.join(sc, folder)
+                                found = self.find_primary_executable_in_dir(full_dir, slug=slug, default_exe=game_obj_or_exe.get("exe"))
+                                if found and os.path.isfile(found) and found not in resolved_paths:
+                                    resolved_paths.append(found)
+                except Exception:
+                    pass
+
+        if resolved_paths:
+            return resolved_paths
+
+        # 4. Standard Epic/Riot/Common Paths
+        common_candidates = [
+            r"C:\Program Files\Epic Games\Fortnite\FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe",
+            r"D:\Epic Games\Fortnite\FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe",
+            r"C:\Riot Games\VALORANT\live\ShooterGame\Binaries\Win64\VALORANT-Win64-Shipping.exe",
+            r"C:\Riot Games\League of Legends\League of Legends.exe",
+            r"C:\Program Files\Epic Games\RocketLeague\Binaries\Win64\RocketLeague.exe",
+        ]
+        for cp in common_candidates:
+            if os.path.exists(cp) and os.path.basename(cp).lower() in target_names_lower and cp not in resolved_paths:
+                resolved_paths.append(os.path.normpath(cp))
+
+        # 5. Windows App Paths registry
         for t_lower, orig in target_names_lower.items():
             for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
                 try:
@@ -829,55 +1030,15 @@ class PulseGpnCore:
                     val, _ = winreg.QueryValueEx(k, "")
                     winreg.CloseKey(k)
                     if val and os.path.exists(val) and val not in resolved_paths:
-                        resolved_paths.append(val)
+                        resolved_paths.append(os.path.normpath(val))
                 except Exception:
                     pass
 
-        # 3. Epic Games Manifests
-        epic_manifests = glob.glob(r"C:\ProgramData\Epic\EpicGamesLauncher\Data\Manifests\*.item")
-        for mf in epic_manifests:
-            try:
-                with open(mf, "r", encoding="utf-8", errors="ignore") as f:
-                    d = json.load(f)
-                    install_loc = d.get("InstallLocation")
-                    if install_loc and os.path.exists(install_loc):
-                        win64_dir = os.path.join(install_loc, "FortniteGame", "Binaries", "Win64")
-                        if os.path.exists(win64_dir):
-                            for t_lower, orig in target_names_lower.items():
-                                cand = os.path.join(win64_dir, orig)
-                                if os.path.exists(cand) and cand not in resolved_paths:
-                                    resolved_paths.append(cand)
-                        else:
-                            for t_lower, orig in target_names_lower.items():
-                                cand = os.path.join(install_loc, orig)
-                                if os.path.exists(cand) and cand not in resolved_paths:
-                                    resolved_paths.append(cand)
-            except Exception:
-                pass
-
-        # 4. Standard common locations for major engines
-        common_dirs = [
-            r"C:\Program Files\Epic Games\Fortnite\FortniteGame\Binaries\Win64",
-            r"C:\Riot Games\VALORANT\live\ShooterGame\Binaries\Win64",
-            r"C:\Riot Games\League of Legends",
-            r"C:\Program Files (x86)\Steam\steamapps\common",
-            r"C:\Program Files\Steam\steamapps\common",
-            r"C:\Program Files\ExitLag",
-            r"D:\Games",
-            r"D:\SteamLibrary\steamapps\common",
-        ]
-        for cd in common_dirs:
-            if os.path.exists(cd):
-                for t_lower, orig in target_names_lower.items():
-                    cand = os.path.join(cd, orig)
-                    if os.path.exists(cand) and cand not in resolved_paths:
-                        resolved_paths.append(cand)
-
-        # 5. Fallback via shutil.which
+        # 6. System PATH via shutil.which
         for t_lower, orig in target_names_lower.items():
             wh = shutil.which(orig)
             if wh and os.path.exists(wh) and wh not in resolved_paths:
-                resolved_paths.append(wh)
+                resolved_paths.append(os.path.normpath(wh))
 
         return resolved_paths
 
@@ -981,8 +1142,14 @@ class PulseGpnCore:
                                                 break
                                     if matched_g:
                                         full_dir = os.path.join(apps_dir, 'common', inst_dir)
-                                        exe_p = os.path.join(full_dir, matched_g['exe'])
-                                        add_g(matched_g, exe_p if os.path.exists(exe_p) else full_dir, "Steam")
+                                        real_exe = self.find_primary_executable_in_dir(full_dir, slug=matched_g.get('slug'), default_exe=matched_g.get('exe'))
+                                        if real_exe and os.path.isfile(real_exe):
+                                            g_copy = dict(matched_g)
+                                            g_copy['exe'] = os.path.basename(real_exe)
+                                            add_g(g_copy, real_exe, "Steam")
+                                        else:
+                                            exe_p = os.path.join(full_dir, matched_g['exe'])
+                                            add_g(matched_g, exe_p if os.path.exists(exe_p) else full_dir, "Steam")
                             except Exception:
                                 pass
                 except Exception:
@@ -2851,6 +3018,7 @@ class PulseGpnApp:
         self.filter_all_btn.pack(side="left", padx=4)
 
         ttk.Button(toolbar, text="🔄 RESCAN PC", style="Dark.TButton", command=self._rescan_installed_games_ui).pack(side="right")
+        ttk.Button(toolbar, text="📁 VINCULAR JUEGO (.EXE)", style="Cyan.TButton", command=self.browse_custom_game_for_library).pack(side="right", padx=(0, 6))
 
         # Main Games Treeview
         tree_f = tk.Frame(card, bg="#161b22", padx=14, pady=4)
@@ -3063,12 +3231,33 @@ class PulseGpnApp:
             bg="#0d2818", fg="#10b981"
         )
 
+    def dispatch_ui(self, fn, *args, **kwargs):
+        try:
+            self.route_result_queue.put(("ui_call", fn, args, kwargs))
+        except Exception:
+            pass
+
     def _poll_route_results(self):
         try:
             while True:
                 msg = self.route_result_queue.get_nowait()
                 mtype = msg[0]
-                if mtype == "route":
+                if mtype == "ui_call":
+                    _, fn, args, kwargs = msg
+                    try:
+                        fn(*args, **kwargs)
+                    except Exception:
+                        pass
+                elif mtype == "apply_complete":
+                    _, primary_dc, game_obj = msg
+                    try:
+                        self._update_primary_dc_ui(primary_dc, game_obj)
+                        self.append_log(
+                            f"[RouteEngine] Applied route for {game_obj.get('exe')} -> {primary_dc['region']} ({primary_dc['ip']}) with program= firewall binding."
+                        )
+                    except Exception:
+                        pass
+                elif mtype == "route":
                     _, gen, ranked, checked_ids, primary_dc, game_obj = msg
                     if gen == self._analysis_generation:
                         self.ranked_routes_cache = ranked
@@ -3125,7 +3314,7 @@ class PulseGpnApp:
                 if self.catalog_view_mode == "installed":
                     self._populate_game_library_tree(self.installed_games)
                 self.append_log(f"[AppScanner] Rescan complete: {len(detected)} games and applications ready.")
-            self.root.after(0, update)
+            self.dispatch_ui(update)
         threading.Thread(target=worker, daemon=True).start()
 
     def _filter_catalog_mode(self, mode):
@@ -3276,6 +3465,14 @@ class PulseGpnApp:
         self.active_game_exe_lbl = tk.Label(tuner_title_f, text="FortniteClient-Win64-Shipping.exe  |  UDP 9000-15999", bg="#161b22", fg="#38bdf8", font=("Consolas", 8), anchor="w")
         self.active_game_exe_lbl.pack(fill="x")
 
+        self.browse_exe_top_btn = tk.Button(
+            top_nav_bar, text="📁 CAMBIAR RUTA .EXE", bg="#21262d", fg="#38bdf8",
+            activebackground="#30363d", activeforeground="#ffffff",
+            font=("Segoe UI", 8, "bold"), bd=1, relief="solid", highlightthickness=0,
+            padx=8, pady=3, cursor="hand2", command=self.browse_and_set_game_executable
+        )
+        self.browse_exe_top_btn.pack(side="left", padx=8)
+
         self.tuner_status_pill = tk.Label(
             top_nav_bar, text="● OPTIMIZED ROUTE ACTIVE", bg="#0d2818", fg="#10b981",
             font=("Segoe UI", 9, "bold"), padx=10, pady=4
@@ -3296,6 +3493,23 @@ class PulseGpnApp:
             font=("Segoe UI", 9, "bold"), pady=7, command=self.toggle_apply_routes
         )
         self.apply_toggle_btn.pack(fill="x", padx=12, pady=(10, 4))
+
+        # Executable & Firewall ALE Binding Box
+        exe_box = tk.Frame(left_col, bg="#21262d", padx=10, pady=8, highlightthickness=1, highlightbackground="#30363d")
+        exe_box.pack(fill="x", padx=12, pady=(4, 6))
+
+        tk.Label(exe_box, text="EJECUTABLE & REGLAS DE FIREWALL", bg="#21262d", fg="#ffffff", font=("Segoe UI", 8, "bold")).pack(anchor="w")
+
+        self.tuner_exe_path_lbl = tk.Label(
+            exe_box, text="Ruta: Auto-detectando...", bg="#21262d", fg="#8b949e",
+            font=("Consolas", 8), anchor="w", wraplength=330, justify="left"
+        )
+        self.tuner_exe_path_lbl.pack(fill="x", pady=(2, 4))
+
+        exe_btn_f = tk.Frame(exe_box, bg="#21262d")
+        exe_btn_f.pack(fill="x")
+        ttk.Button(exe_btn_f, text="📁 EXAMINAR .EXE", style="Cyan.TButton", command=self.browse_and_set_game_executable).pack(side="left", expand=True, fill="x", padx=(0, 2))
+        ttk.Button(exe_btn_f, text="🔄 AUTO-DETECTAR", style="Dark.TButton", command=self.auto_detect_current_game_binary).pack(side="left", padx=(2, 0))
 
         # Mode Checkboxes
         mode_box = tk.Frame(left_col, bg="#21262d", padx=10, pady=8, highlightthickness=1, highlightbackground="#30363d")
@@ -3786,12 +4000,7 @@ class PulseGpnApp:
                 redundancy=redundancy,
                 lock_fn_subregion=fn_lock
             )
-            def update_ui():
-                self._update_primary_dc_ui(primary_dc, g)
-                self.append_log(
-                    f"[RouteEngine] Applied route for {g['exe']} -> {primary_dc['region']} ({primary_dc['ip']}) with program= firewall binding."
-                )
-            self.root.after(0, update_ui)
+            self.route_result_queue.put(("apply_complete", primary_dc, g))
 
         threading.Thread(target=bg_apply, daemon=True).start()
 
@@ -3818,12 +4027,159 @@ class PulseGpnApp:
             return
         self.select_and_apply_game_routes(self.selected_game_obj, live_probe=live_probe)
 
+    def browse_and_set_game_executable(self):
+        """
+        Allows the gamer to browse and select the true local executable (.exe)
+        for the currently selected game. Immediately updates database and re-applies firewall rules.
+        """
+        if not self.selected_game_obj:
+            return
+        g = self.selected_game_obj
+        title = g.get("title", "Game")
+
+        initial_dir = r"C:\Program Files"
+        if g.get("installed_path"):
+            cand = g["installed_path"]
+            if os.path.isfile(cand):
+                initial_dir = os.path.dirname(cand)
+            elif os.path.isdir(cand):
+                initial_dir = cand
+        elif os.path.exists(r"C:\Program Files (x86)\Steam\steamapps\common"):
+            initial_dir = r"C:\Program Files (x86)\Steam\steamapps\common"
+
+        chosen_path = filedialog.askopenfilename(
+            parent=self.root,
+            title=f"Seleccionar Ejecutable de Juego (.exe) para {title}",
+            initialdir=initial_dir,
+            filetypes=[("Archivos Ejecutables (*.exe)", "*.exe"), ("Todos los Archivos (*.*)", "*.*")]
+        )
+        if not chosen_path:
+            return
+
+        chosen_path = os.path.normpath(chosen_path)
+        if not os.path.isfile(chosen_path):
+            return
+
+        self.apply_custom_game_path(g, chosen_path)
+
+    def apply_custom_game_path(self, g, chosen_path):
+        """
+        Applies a verified executable path to a game object, persists in SQLite,
+        and re-configures firewall isolation rules with the exact program= parameter.
+        """
+        exe_name = os.path.basename(chosen_path)
+        g["installed_path"] = chosen_path
+        g["exe"] = exe_name
+        g["custom_path"] = True
+        g["is_installed"] = True
+
+        slug = g.get("slug") or exe_name.lower()
+        title = g.get("title") or exe_name
+        self.core.save_custom_game_path(slug, title, exe_name, chosen_path)
+
+        # Ensure game is in self.installed_games
+        if not any(x.get("slug") == slug for x in self.installed_games):
+            self.installed_games.append(g)
+            if hasattr(self, "detected_games_pill"):
+                self.detected_games_pill.config(text=f"● {len(self.installed_games)} Games Detected on PC")
+            if hasattr(self, "filter_installed_btn"):
+                self.filter_installed_btn.config(text=f"● INSTALLED GAMES ({len(self.installed_games)})")
+
+        self.exe_var.set(exe_name)
+        if hasattr(self, "active_game_exe_lbl"):
+            self.active_game_exe_lbl.config(text=f"Process: {exe_name}  |  {g.get('ports', 'UDP/TCP')}")
+        if hasattr(self, "tuner_exe_path_lbl"):
+            self.tuner_exe_path_lbl.config(
+                text=f"● RUTA VINCULADA: {chosen_path}",
+                fg="#10b981"
+            )
+
+        self.append_log(f"[ExecutableBinding] Ruta verificada para '{title}': {chosen_path} (Proceso: {exe_name})")
+
+        # Immediately update Windows Defender Firewall ALE rules with the real executable
+        if self.routes_active and self.current_primary_dc:
+            self.append_log(f"[Firewall] Actualizando regla Windows Defender Firewall con program='{chosen_path}'...")
+            self.apply_checked_routes_now()
+
+    def auto_detect_current_game_binary(self):
+        """
+        Attempts multi-drive discovery to automatically locate the true binary on disk.
+        """
+        if not self.selected_game_obj:
+            return
+        g = self.selected_game_obj
+        resolved = self.core.resolve_game_executable_paths(g)
+        if resolved and os.path.isfile(resolved[0]):
+            self.apply_custom_game_path(g, resolved[0])
+            self.append_log(f"[AutoDetect] Ejecutable auto-detectado exitosamente: {resolved[0]}")
+        else:
+            self.append_log(f"[AutoDetect] No se encontró automáticamente en rutas estándar. Haz clic en '📁 EXAMINAR .EXE' para elegirlo manualmente.")
+
+    def browse_custom_game_for_library(self):
+        """
+        Allows the user to select an .exe from anywhere on their PC from the Game Library view.
+        """
+        chosen_path = filedialog.askopenfilename(
+            parent=self.root,
+            title="Seleccionar Ejecutable de Juego (.exe)",
+            filetypes=[("Archivos Ejecutables (*.exe)", "*.exe"), ("Todos los Archivos (*.*)", "*.*")]
+        )
+        if not chosen_path or not os.path.isfile(chosen_path):
+            return
+
+        chosen_path = os.path.normpath(chosen_path)
+        exe_name = os.path.basename(chosen_path)
+        base_title = os.path.splitext(exe_name)[0].capitalize()
+
+        matched = next((x for x in self.all_games if x.get("exe", "").lower() == exe_name.lower()), None)
+        if not matched:
+            matched = next((x for x in self.all_games if base_title.lower() in x.get("title", "").lower()), None)
+
+        if matched:
+            g = matched
+        else:
+            slug = re.sub(r'[^a-zA-Z0-9_]', '', base_title.lower().replace(' ', '_'))
+            g = {
+                "app_id": 0,
+                "slug": slug,
+                "title": f"{base_title} (Custom)",
+                "display": f"★ {base_title} [{exe_name}]",
+                "exe": exe_name,
+                "extra_exes": [],
+                "ports": "UDP/TCP Auto",
+                "subnets": [],
+                "preferred_dcs": [2129, 2133, 2130],
+                "icon_path": "",
+                "is_competitive": True,
+            }
+            self.all_games.append(g)
+
+        self.apply_custom_game_path(g, chosen_path)
+        self.select_and_apply_game_routes(g, live_probe=False)
+        self.switch_page("route_tuner")
+
     def _set_active_game_ui(self, g):
         self.selected_game_obj = g
         self.exe_var.set(g["exe"])
         title_str = g.get("title", g.get("display", ""))[:38]
         self.active_game_title_lbl.config(text=title_str)
         self.active_game_exe_lbl.config(text=f"Process: {g['exe']}  |  {g.get('ports', '')}")
+
+        # Resolve real executable path and reflect status in UI
+        resolved = self.core.resolve_game_executable_paths(g)
+        current_path = resolved[0] if (resolved and os.path.isfile(resolved[0])) else (g.get("installed_path") if (g.get("installed_path") and os.path.isfile(g.get("installed_path"))) else None)
+
+        if hasattr(self, "tuner_exe_path_lbl"):
+            if current_path:
+                self.tuner_exe_path_lbl.config(
+                    text=f"● RUTA VINCULADA: {current_path}",
+                    fg="#10b981"
+                )
+            else:
+                self.tuner_exe_path_lbl.config(
+                    text=f"⚠ RUTA NO VINCULADA (Predeterminado: {g.get('exe')}) · Haz clic en 'EXAMINAR .EXE'",
+                    fg="#f59e0b"
+                )
 
         if hasattr(self, "route_hdr_lbl"):
             self.route_hdr_lbl.config(
@@ -3873,11 +4229,11 @@ class PulseGpnApp:
                 return
 
             menu = pystray.Menu(
-                pystray.MenuItem("⚡ Abrir PulseGPN", lambda icon, item: self.root.after(0, self.restore_from_tray), default=True),
-                pystray.MenuItem("⏸ Pausar / Reanudar Gráfica", lambda icon, item: self.root.after(0, self.toggle_live_telemetry_graph)),
-                pystray.MenuItem("📥 Minimizar a Bandeja", lambda icon, item: self.root.after(0, self.minimize_to_tray)),
+                pystray.MenuItem("⚡ Abrir PulseGPN", lambda icon, item: self.dispatch_ui(self.restore_from_tray), default=True),
+                pystray.MenuItem("⏸ Pausar / Reanudar Gráfica", lambda icon, item: self.dispatch_ui(self.toggle_live_telemetry_graph)),
+                pystray.MenuItem("📥 Minimizar a Bandeja", lambda icon, item: self.dispatch_ui(self.minimize_to_tray)),
                 pystray.Menu.SEPARATOR,
-                pystray.MenuItem("✕ Salir por Completo", lambda icon, item: self.root.after(0, self.exit_application))
+                pystray.MenuItem("✕ Salir por Completo", lambda icon, item: self.dispatch_ui(self.exit_application))
             )
 
             self.tray_icon = pystray.Icon(
@@ -4253,7 +4609,7 @@ class PulseGpnApp:
     def RefreshAndOptimizeNICs(self):
         def worker():
             self.core.optimize_active_rndis_and_nic()
-            self.root.after(0, self.RefreshNICTable)
+            self.dispatch_ui(self.RefreshNICTable)
             self.append_log("[Multi-Internet] RNDIS & NIC adapters optimized with Metric=1, TCPNoDelay=1, and Metered=0.")
         threading.Thread(target=worker, daemon=True).start()
 
@@ -4267,7 +4623,7 @@ class PulseGpnApp:
                     self.sniffer_tree.delete(item)
                 for proto, rip, rport, pid in conns:
                     self.sniffer_tree.insert("", "end", values=(pid, proto, rip, rport))
-            self.root.after(0, update_ui)
+            self.dispatch_ui(update_ui)
             self.trigger_reanalyze_preserving_mode(live_probe=True)
         threading.Thread(target=worker, daemon=True).start()
 
@@ -4281,10 +4637,10 @@ class PulseGpnApp:
                     self.dns_tree.delete(item)
                 for ms, name, p, s in res:
                     self.dns_tree.insert("", "end", values=(name, p, s, f"{ms} ms"))
-            self.root.after(0, update_dns_ui)
+            self.dispatch_ui(update_dns_ui)
             self.append_log(f"[DnsOptimizer] Fastest DNS: {best_name} ({p_dns}) -> {best_ms} ms. Applying...")
             self.core.apply_dns_to_active_interfaces(p_dns, s_dns)
-            self.root.after(0, self.RefreshNICTable)
+            self.dispatch_ui(self.RefreshNICTable)
         threading.Thread(target=worker, daemon=True).start()
 
     def run_ram_cleaner(self):
@@ -4318,7 +4674,7 @@ class PulseGpnApp:
                     isp_str = st.get('isp', 'TELECOMUNICACIONES DE GUATEMALA') if st else "TELECOMUNICACIONES DE GUATEMALA"
                     city_str = st.get('city', 'Guatemala City') if st else "Guatemala City"
                     self.append_log(f"[StorageDB] Synchronized: {dl_str} DL / {ul_str} UL ({isp_str}).")
-            self.root.after(0, update_ui)
+            self.dispatch_ui(update_ui)
         threading.Thread(target=worker, daemon=True).start()
 
     def stop_all_routes_ui(self):
