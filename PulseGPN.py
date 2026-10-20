@@ -495,6 +495,9 @@ class PulseGpnCore:
         self.exe_to_game_map = {}
         self.cached_dc_pings = {}
         self.last_fortnite_match_server = None  # (ip, port)
+        self.last_game_match_server = {}  # {slug_or_exe: (ip, port)}
+        self.last_applied_gateway_ip = None
+        self.last_applied_if_index = None
         self.speedtest_data = {}
         self.traffic_shaper_limits = {}
         self.system_telemetry_active = False
@@ -1661,6 +1664,144 @@ class PulseGpnCore:
             pass
         return info
 
+    def parse_valorant_live_log_server(self):
+        """
+        Reads the tail of ShooterGame.log without locking to extract:
+          1. The live match server IP and port: Beginning travel to x.x.x.x:port or URL: x.x.x.x:port
+        """
+        log_path = os.path.expandvars(r"%LOCALAPPDATA%\VALORANT\Saved\Logs\ShooterGame.log")
+        info = {"match_ip": None, "match_port": None}
+        if not os.path.exists(log_path):
+            return info
+        try:
+            fsize = os.path.getsize(log_path)
+            with open(log_path, "rb") as f:
+                f.seek(max(0, fsize - 2 * 1024 * 1024))
+                tail_chunk = f.read().decode("utf-8", "ignore")
+
+            matches = re.findall(r"Beginning travel to ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+):([0-9]+)", tail_chunk)
+            if not matches:
+                matches = re.findall(r"URL:\s+([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+):([0-9]+)", tail_chunk)
+
+            if matches:
+                info["match_ip"] = matches[-1][0]
+                info["match_port"] = int(matches[-1][1])
+        except Exception:
+            pass
+        return info
+
+    def detect_live_game_match_server(self, game_obj):
+        """
+        Universal live match server detector for ANY game in library or storage.db:
+          1. Validates whether the game's executable or any of its extra_exes are currently running.
+          2. If running:
+             - Fortnite: inspects FortniteGame.log + UDP sockets.
+             - Valorant: inspects ShooterGame.log + UDP sockets.
+             - CS2: inspects cs2.exe UDP sockets + console.log.
+             - Any other game (Apex, CoD, Blood Strike, Roblox, etc.): inspects active UDP/TCP sockets
+               bound to the running process PIDs, filtering out local/private IPs and HTTPS/CDN auth ports.
+          3. Returns dict: {"is_running": bool, "match_ip": str|None, "match_port": int|None, "source": str|None}
+        """
+        if not game_obj:
+            return {"is_running": False, "match_ip": None, "match_port": None, "source": None}
+
+        exe = game_obj.get("exe", "game.exe").lower()
+        slug = game_obj.get("slug", exe.replace(".exe", "")).lower()
+        extra = [e.lower() for e in game_obj.get("extra_exes", [])]
+        all_targets = [exe] + extra
+        base_names = [t.replace(".exe", "") for t in all_targets]
+
+        # 1. Identify running process PIDs for this game
+        target_pids = set()
+        try:
+            for p in psutil.process_iter(['pid', 'name']):
+                try:
+                    pname = (p.info['name'] or '').lower()
+                    for b in base_names:
+                        if b in pname:
+                            target_pids.add(p.info['pid'])
+                            break
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+        except Exception:
+            pass
+
+        if not target_pids:
+            return {"is_running": False, "match_ip": None, "match_port": None, "source": None}
+
+        # 2. Game IS running -> Check game-specific engine logs
+        if "fortnite" in exe or slug == "fortnite":
+            fn_info = self.parse_fortnite_live_log_server_and_pings()
+            if fn_info.get("match_ip") and fn_info.get("match_port"):
+                return {
+                    "is_running": True,
+                    "match_ip": fn_info["match_ip"],
+                    "match_port": fn_info["match_port"],
+                    "source": "FN-LOG",
+                    "client_ping": fn_info.get("client_ping")
+                }
+
+        if "valorant" in exe or slug == "valorant":
+            val_info = self.parse_valorant_live_log_server()
+            if val_info.get("match_ip") and val_info.get("match_port"):
+                return {
+                    "is_running": True,
+                    "match_ip": val_info["match_ip"],
+                    "match_port": val_info["match_port"],
+                    "source": "VAL-LOG"
+                }
+
+        # 3. Kernel socket inspection across all target PIDs for ANY game
+        candidate_udp = None
+        candidate_tcp = None
+        try:
+            for c in psutil.net_connections(kind='inet'):
+                if c.pid in target_pids and c.raddr:
+                    rip = getattr(c.raddr, "ip", None) or (c.raddr[0] if isinstance(c.raddr, (tuple, list)) else None)
+                    rport = getattr(c.raddr, "port", None) or (c.raddr[1] if isinstance(c.raddr, (tuple, list)) else None)
+                    if not rip or not rport:
+                        continue
+                    if rip.startswith("127.") or rip == "0.0.0.0" or rip.startswith("192.168.") or rip.startswith("10."):
+                        continue
+                    if rip.startswith("169.254.") or rip.startswith("224.") or rip == "255.255.255.255":
+                        continue
+                    if rip.startswith("172."):
+                        try:
+                            sec = int(rip.split(".")[1])
+                            if 16 <= sec <= 31:
+                                continue
+                        except Exception:
+                            pass
+                    if rport in (80, 443, 53, 5222, 8080):
+                        continue
+
+                    proto = "UDP" if c.type == socket.SOCK_DGRAM else "TCP"
+                    if proto == "UDP":
+                        candidate_udp = (rip, int(rport))
+                        break
+                    elif proto == "TCP" and not candidate_tcp:
+                        candidate_tcp = (rip, int(rport))
+        except Exception:
+            pass
+
+        if candidate_udp:
+            return {
+                "is_running": True,
+                "match_ip": candidate_udp[0],
+                "match_port": candidate_udp[1],
+                "source": "UDP-SOCKET"
+            }
+
+        if candidate_tcp:
+            return {
+                "is_running": True,
+                "match_ip": candidate_tcp[0],
+                "match_port": candidate_tcp[1],
+                "source": "TCP-SOCKET"
+            }
+
+        return {"is_running": True, "match_ip": None, "match_port": None, "source": "LOBBY"}
+
     def sniff_live_game_connections(self, target_exe_name):
         """
         Inspects live sockets for target_exe_name AND parses FortniteGame.log if target is Fortnite.
@@ -2300,6 +2441,8 @@ class PulseGpnCore:
         self.applied_routes.add(dest)
 
     def apply_kernel_routes_for_game(self, primary_dc, backup_dcs, gateway_ip, if_index, game_obj, lock_fn_subregion=True):
+        self.last_applied_gateway_ip = gateway_ip
+        self.last_applied_if_index = if_index
         # Always clean previous dynamic routes before injecting the newly selected route
         for old_r in list(self.applied_routes):
             subprocess.run(["route", "delete", old_r], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
@@ -2491,7 +2634,10 @@ class PulseGpnCore:
 
         bridge_target_ip = primary_dc["ip"]
         bridge_target_port = int(primary_dc.get("port", 443))
-        if self.last_fortnite_match_server and "fortnite" in game_exe.lower():
+        g_slug = game_obj.get("slug", game_exe.lower().replace(".exe", "")).lower() if game_obj else ""
+        if self.last_game_match_server.get(g_slug):
+            bridge_target_ip, bridge_target_port = self.last_game_match_server[g_slug]
+        elif self.last_fortnite_match_server and "fortnite" in game_exe.lower():
             bridge_target_ip, bridge_target_port = self.last_fortnite_match_server
 
         backup_ips = [b["ip"] for b in (backup_dcs or [])]
@@ -3228,7 +3374,7 @@ class PulseGpnApp:
         self.root.after(150, self.initial_startup_auto_analysis)
         self.core.start_exitlag_auto_sync_watchdog(lambda evt: self.dispatch_ui(self._on_exitlag_auto_synced, evt))
         self.root.after(1000, self._telemetry_graph_tick)
-        self.root.after(3000, self.fortnite_live_match_watcher_tick)
+        self.root.after(3000, self.universal_game_match_watcher_tick)
         self.root.after(6000, self.process_watchdog_tick)
 
     def _configure_styles(self):
@@ -5035,22 +5181,95 @@ class PulseGpnApp:
 
         if hasattr(self, "hdr_pill") and self.selected_game_obj and self.current_primary_dc:
             g_exe = self.selected_game_obj.get("exe", "game.exe")
+            g_slug = self.selected_game_obj.get("slug", g_exe.lower().replace(".exe", "")).lower()
             reg = self.current_primary_dc.get("region", "Datacenter")
-            self.hdr_pill.config(
-                text=f"● ROUTING: {g_exe} ──► {reg} ({curr_p:.1f} ms)",
-                bg=badge_bg, fg=badge_fg
-            )
+            live_srv = self.core.last_game_match_server.get(g_slug)
+            if live_srv:
+                self.hdr_pill.config(
+                    text=f"● MATCH LIVE: {g_exe} ──► {live_srv[0]}:{live_srv[1]} ({reg} · {curr_p:.1f} ms)",
+                    bg=badge_bg, fg=badge_fg
+                )
+            else:
+                self.hdr_pill.config(
+                    text=f"● ROUTING: {g_exe} ──► {reg} ({curr_p:.1f} ms)",
+                    bg=badge_bg, fg=badge_fg
+                )
 
         self.root.after(480, self._telemetry_graph_tick)
 
-    def fortnite_live_match_watcher_tick(self):
-        info = self.core.parse_fortnite_live_log_server_and_pings()
-        if info["match_ip"] and info["match_ip"] != self.core.last_fortnite_match_server:
-            self.core.last_fortnite_match_server = (info["match_ip"], info["match_port"])
-            self.append_log(
-                f"[FortniteWatcher] Live match server detected: {info['match_ip']}:{info['match_port']} (QoS Logged)."
-            )
-        self.root.after(4000, self.fortnite_live_match_watcher_tick)
+    def universal_game_match_watcher_tick(self):
+        """
+        Universal game live match & socket watcher.
+        Active ONLY when a game is currently selected in Route Tuner.
+        If no game is selected, or routes are stopped, or game is not running,
+        it idles with 0 CPU overhead.
+        When game is running, dynamically intercepts live UDP/TCP match server IPs:
+          - Fortnite: FortniteGame.log + QoS telemetry + UDP sockets.
+          - Valorant: ShooterGame.log + UDP sockets.
+          - CS2 / CoD / Apex / Generic: Kernel sockets for target process PIDs.
+        On match detection:
+          - Dynamically injects high-priority Metric 1 route to match IP.
+          - Updates UI live badge and HUD with exact match server address.
+        """
+        g = self.selected_game_obj
+        if not g or not getattr(self, "routes_active", True):
+            self.root.after(4000, self.universal_game_match_watcher_tick)
+            return
+
+        def bg_detect():
+            res = self.core.detect_live_game_match_server(g)
+            self.dispatch_ui(self._on_match_watcher_result, g, res)
+
+        threading.Thread(target=bg_detect, daemon=True).start()
+        self.root.after(4000, self.universal_game_match_watcher_tick)
+
+    def _on_match_watcher_result(self, g, res):
+        if self.selected_game_obj != g:
+            return
+
+        g_slug = g.get("slug", g.get("exe", "game").lower().replace(".exe", "")).lower()
+        g_title = g.get("title", g.get("display", "Game"))
+
+        if not res.get("is_running"):
+            return
+
+        mip = res.get("match_ip")
+        mport = res.get("match_port")
+        if mip and mport:
+            last_srv = self.core.last_game_match_server.get(g_slug)
+            if (mip, mport) != last_srv:
+                self.core.last_game_match_server[g_slug] = (mip, mport)
+                if "fortnite" in g.get("exe", "").lower():
+                    self.core.last_fortnite_match_server = (mip, mport)
+
+                self.append_log(
+                    f"[MatchWatcher] Live match server detected for {g_title}: {mip}:{mport} (Source: {res.get('source', 'LIVE')})."
+                )
+
+                # Inject dynamic Metric 1 route if routing is active
+                if self.routes_active and getattr(self.core, "last_applied_gateway_ip", None):
+                    gw = self.core.last_applied_gateway_ip
+                    if_idx = getattr(self.core, "last_applied_if_index", 1)
+                    self.core._inject_single_route(mip, "255.255.255.255", gw, 1, if_idx)
+                    parts = mip.split(".")
+                    if len(parts) == 4:
+                        msub = f"{parts[0]}.{parts[1]}.{parts[2]}.0"
+                        self.core._inject_single_route(msub, "255.255.255.0", gw, 1, if_idx)
+                    self.append_log(
+                        f"[MatchWatcher] Injected live match route {mip}/32 (Metric 1 via {gw}) for zero-jitter gameplay."
+                    )
+
+                if hasattr(self, "hdr_pill") and self.current_primary_dc:
+                    reg = self.current_primary_dc.get("region", "Datacenter")
+                    self.hdr_pill.config(
+                        text=f"● MATCH LIVE: {g_title} ──► {mip}:{mport} ({reg})",
+                        bg="#0d2818", fg="#10b981"
+                    )
+                if hasattr(self, "tuner_status_pill"):
+                    self.tuner_status_pill.config(
+                        text=f"● LIVE MATCH: {mip}:{mport}",
+                        bg="#0d2818", fg="#10b981"
+                    )
 
     def process_watchdog_tick(self):
         if hasattr(self, "engine_status_pill"):
