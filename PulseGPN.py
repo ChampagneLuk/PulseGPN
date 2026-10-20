@@ -2425,7 +2425,6 @@ class PulseGpnApp:
         self.route_result_queue = queue.Queue()
         self.telemetry_sample_queue = queue.Queue(maxsize=40)
         threading.Thread(target=self._live_telemetry_prober_worker, daemon=True).start()
-        threading.Thread(target=self._periodic_5s_routes_prober_worker, daemon=True).start()
 
         # Default to MANUAL ROUTING by user specification
         self.manual_mode_var = tk.BooleanVar(value=True)
@@ -2836,20 +2835,22 @@ class PulseGpnApp:
         else:
             min_p = 56.0
 
-        self.current_primary_dc = {
-            "dcId": primary_dc["dcId"],
-            "region": primary_dc["region"],
-            "ip": primary_dc["ip"],
-            "min": min_p,
-            "fn_sub": primary_dc.get("fn_sub", "")
-        }
+        self.current_primary_dc = dict(primary_dc)
+        self.current_primary_dc["min"] = min_p
+        if "probe_host" not in self.current_primary_dc:
+            full_dc = next((d for d in GLOBAL_DATACENTERS if d["dcId"] == primary_dc["dcId"]), None)
+            if full_dc and "probe_host" in full_dc:
+                self.current_primary_dc["probe_host"] = full_dc["probe_host"]
+
+        g_exe = g.get("exe", "game.exe")
+        city_name = self.current_primary_dc.get("city", self.current_primary_dc.get("region", "Datacenter"))
         self.live_ping_badge.config(text=f"CURRENT LATENCY: {min_p:.1f} ms")
         self.hdr_pill.config(
-            text=f"● ROUTING: {g['exe']} ──► {primary_dc['region']} ({min_p:.1f} ms)",
+            text=f"● ROUTING: {g_exe} ──► {city_name} ({min_p:.1f} ms)",
             bg="#0d2818", fg="#10b981"
         )
         self.tuner_status_pill.config(
-            text=f"● ROUTE BOUND: {primary_dc.get('city', primary_dc['region'])} ({min_p:.1f} ms)",
+            text=f"● ROUTE BOUND: {city_name} ({min_p:.1f} ms)",
             bg="#0d2818", fg="#10b981"
         )
 
@@ -2872,19 +2873,19 @@ class PulseGpnApp:
                             f"[RouteEngine] Switched active game to '{game_obj.get('title')}'. "
                             f"Locked primary datacenter #{list(self.checked_dc_ids)[0]} with program='{game_obj.get('exe')}'."
                         )
-                elif mtype == "matrix_5s_update":
-                    ranked = msg[1]
+                elif mtype == "reprobe_complete":
+                    _, ranked, checked_ids, primary_dc, game_obj = msg
                     self.ranked_routes_cache = ranked
-                    self._update_matrix_tree_live_values(ranked)
-                    if self.current_primary_dc:
-                        cur_id = self.current_primary_dc.get("dcId")
-                        updated_dc = next((r["dc"] for r in ranked if r["dc"]["dcId"] == cur_id), None)
-                        if updated_dc and updated_dc.get("min", 999) < 900:
-                            min_p = updated_dc["min"]
-                            self.tuner_status_pill.config(
-                                text=f"● ROUTE BOUND: {self.current_primary_dc.get('city', self.current_primary_dc['region'])} ({min_p:.1f} ms)",
-                                bg="#0d2818", fg="#10b981"
-                            )
+                    self.checked_dc_ids = checked_ids
+                    self._rebuild_center_route_checkboxes(ranked)
+                    self._rebuild_matrix_tree(ranked)
+                    if primary_dc:
+                        self._update_primary_dc_ui(primary_dc, game_obj)
+                    self.hide_route_loading()
+                    self.append_log(f"[RouteEngine] Re-probe complete: All 35 datacenters measured successfully.")
+                elif mtype == "reprobe_error":
+                    self.hide_route_loading()
+                    self.append_log(f"[RouteEngine] Re-probe error: {msg[1]}")
                 elif mtype == "rescan":
                     installed = msg[1]
                     self.installed_games = installed
@@ -3171,7 +3172,7 @@ class PulseGpnApp:
 
         btn_row = ttk.Frame(left_col, style="Card.TFrame")
         btn_row.pack(fill="x", padx=12, pady=(4, 8))
-        ttk.Button(btn_row, text="🔄 RE-PROBE PING", style="Cyan.TButton", command=lambda: self.trigger_reanalyze_preserving_mode(live_probe=True)).pack(side="left", expand=True, fill="x", padx=(0, 3))
+        ttk.Button(btn_row, text="🔄 RE-PROBE PING", style="Cyan.TButton", command=self.run_reprobe_all_routes_ui).pack(side="left", expand=True, fill="x", padx=(0, 3))
         ttk.Button(btn_row, text="🎯 APPLY CHECKBOX", style="Red.TButton", command=self.apply_checked_routes_now).pack(side="left", expand=True, fill="x", padx=(3, 0))
 
         # Right Column: Live Telemetry Canvas + 35 Routes Matrix
@@ -3637,10 +3638,11 @@ class PulseGpnApp:
     # --------------------------------------------------------------------------
     def _live_telemetry_prober_worker(self):
         """
-        Continuous real-time hardware telemetry prober.
-        Sends live native ICMP Echo (TOS 0xB8) / TCP SYN packets every ~480ms
-        directly to the active primary gateway. Guarantees non-stop fluid
-        telemetry stream so the real-time graph continuously flows and never freezes.
+        Continuous real-time hardware telemetry prober for the active connection.
+        Sends live native ICMP Echo (TOS 0xB8) / TCP SYN packets directly
+        to the active primary gateway every ~450ms.
+        Guarantees non-stop fluid telemetry stream that immediately reflects
+        physical network bufferbloat and load during speedtests.
         """
         while True:
             try:
@@ -3649,13 +3651,18 @@ class PulseGpnApp:
                     target_dc = GLOBAL_DATACENTERS[0]
 
                 if target_dc:
-                    probe_target = target_dc.get("probe_host") or target_dc.get("ip") or "1.1.1.1"
+                    dc_id = target_dc.get("dcId")
+                    full_dc = next((d for d in GLOBAL_DATACENTERS if d["dcId"] == dc_id), target_dc)
+                    probe_target = full_dc.get("probe_host") or full_dc.get("ip") or "1.1.1.1"
+
+                    # 1. Native ICMP Echo Request with DSCP 46 Expedited Forwarding TOS 0xB8
                     rtts = self.core.icmp_prober.ping_ip(probe_target, count=1, timeout_ms=450)
                     if rtts and rtts[0] < 900:
                         sample = float(rtts[0])
                         loss = 0
                     else:
-                        res = self.core.probe_datacenter_latency(target_dc, count=1, timeout=0.45)
+                        # 2. Non-blocking TCP SYN handshake probe to port 443
+                        res = self.core.probe_datacenter_latency(full_dc, count=1, timeout=0.45)
                         if res["min"] < 900:
                             sample = float(res["min"])
                             loss = int(res.get("loss", 0))
@@ -3675,29 +3682,54 @@ class PulseGpnApp:
                                 pass
             except Exception:
                 pass
-            time.sleep(0.48)
+            time.sleep(0.45)
 
-    def _periodic_5s_routes_prober_worker(self):
+    def run_reprobe_all_routes_ui(self):
         """
-        Continuous 5-second Datacenter Matrix prober.
-        Every 5 seconds, concurrently queries all 35 transit points in parallel
-        without touching Tkinter variables from the background thread.
-        Pushes unadulterated rankings to the UI queue for smooth in-place matrix updates.
+        Executes on-demand benchmark across all 35 datacenters.
+        Displays loading modal with animated progress bar while measuring all gateways,
+        then smoothly updates the 35-route matrix and hides the loading bar.
         """
-        time.sleep(2.0)
-        while True:
+        if not self.selected_game_obj:
+            return
+        g = self.selected_game_obj
+        title = g.get("title", g.get("display", "Game"))
+
+        self.show_route_loading(
+            title="RE-MEASURING ALL 35 GLOBAL DATACENTERS",
+            game_name=f"{title} ({g.get('exe', 'game.exe')})",
+            details="Executing Hardware ICMP (TOS 0xB8) & TCP SYN Handshakes | Analyzing All 35 Transit Points"
+        )
+
+        def worker():
             try:
-                if getattr(self, "selected_game_obj", None):
-                    cont = getattr(self, "current_continent_filter", "ALL")
-                    self.core.probe_all_datacenters(count=2, timeout=0.75)
-                    ranked = self.core.analyze_all_routes_for_game(self.selected_game_obj, continent_filter=cont, live_probe=True)
-                    if ranked:
-                        self.route_result_queue.put(("matrix_5s_update", ranked))
-                        best_p = ranked[0]["min"]
-                        self.append_log(f"[PingMonitor-5s] All 35 Datacenter routes refreshed. Best Gateway: {ranked[0]['dc']['city']} ({best_p:.1f} ms).")
-            except Exception:
-                pass
-            time.sleep(5.0)
+                # 1. Parallel hardware probe across all 35 datacenters
+                self.core.probe_all_datacenters(count=2, timeout=0.85)
+
+                # 2. Analyze routes with unadulterated metrics
+                cont = getattr(self, "current_continent_filter", "ALL")
+                ranked = self.core.analyze_all_routes_for_game(g, continent_filter=cont, live_probe=True)
+
+                # 3. Preserve manual selections
+                checked_ids = set(self.checked_dc_ids) if self.checked_dc_ids else ({ranked[0]["dc"]["dcId"]} if ranked else {2129})
+                ranked_map = {r["dc"]["dcId"]: r["dc"] for r in ranked}
+                chosen_dcs = [ranked_map[dc_id] for dc_id in checked_ids if dc_id in ranked_map]
+                if not chosen_dcs:
+                    chosen_dcs = [dc for dc in GLOBAL_DATACENTERS if dc["dcId"] in checked_ids]
+                primary_dc = chosen_dcs[0] if chosen_dcs else None
+
+                if primary_dc:
+                    redundancy = int(self.udp_routes_var.get()) if hasattr(self, "udp_routes_var") else 2
+                    fn_lock = self.fn_subregion_lock_var.get() if hasattr(self, "fn_subregion_lock_var") else True
+                    backup_dcs = chosen_dcs[1:] if len(chosen_dcs) > 1 else []
+                    self.core.apply_specific_dc_route(primary_dc, backup_dcs, g, redundancy=redundancy, lock_fn_subregion=fn_lock)
+
+                time.sleep(0.3)
+                self.route_result_queue.put(("reprobe_complete", ranked, checked_ids, primary_dc, g))
+            except Exception as e:
+                self.route_result_queue.put(("reprobe_error", str(e)))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _update_matrix_tree_live_values(self, ranked):
         row_map = {}

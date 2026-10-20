@@ -37,12 +37,12 @@
 
 ## 2. Key Subsystems and Mechanisms
 
-### 2.1 Asynchronous Dual-Mode Latency Engine & Continuous 5-Second Prober
-To ensure responsive real-time routing and true carrier transparency, PulseGPN implements a concurrent dual-probe architecture executed via `ThreadPoolExecutor(max_workers=35)` running continuously on a 5-second hardware polling cycle:
-1. **Hardware ICMP Probing:** Interacts directly with Windows `iphlpapi.dll` using `IcmpCreateFile` and `IcmpSendEcho`. Transmits 32-byte ICMP Echo Request packets tagged with TOS `0xB8` (DSCP 46 Expedited Forwarding) to measure exact physical link round-trip time (RTT).
-2. **TCP SYN Connect Probing:** For cloud datacenters or game edge relays filtering ICMP traffic (e.g. AWS EC2, Cloudflare, Riot Direct edge nodes), the engine initiates a non-blocking TCP SYN socket connection to TCP port 443 with a 750ms timeout. If the remote host replies with SYN-ACK or resets via RST-ACK (`WSAECONNREFUSED` / 10061), high-precision performance counter timers calculate true network round-trip time.
-3. **100% Unadulterated Physical Measurements:** PulseGPN completely rejects synthetic jitter, math clamping, or simulated variance. Every millisecond, jitter value, and packet loss metric originates from physical kernel socket timers and native ICMP hardware replies (`min <= avg <= max` mathematically guaranteed).
-4. **Continuous 5-Second Automated Telemetry:** A dedicated background daemon (`_continuous_5s_prober_worker`) fires every 5 seconds, concurrently querying all 35 global transit points, updating the Route Tuner matrix table in-place without GUI flicker or scroll displacement, and continuously feeding the real-time bufferbloat telemetry graph.
+### 2.1 Asynchronous Dual-Mode Real-Time Latency Engine & On-Demand Re-Probe
+To ensure responsive real-time bufferbloat monitoring and carrier transparency without background polling overhead, PulseGPN implements a decoupled dual-architecture prober:
+1. **Real-Time Continuous Hardware Telemetry (~450ms Cycle):** The live telemetry graph is powered by `_live_telemetry_prober_worker`, querying the active gateway every 450ms using native Win32 `iphlpapi.dll` (`IcmpSendEcho` with TOS `0xB8` DSCP 46 Expedited Forwarding). If ICMP is filtered, it immediately falls back to non-blocking TCP SYN handshakes to port 443 with high-resolution performance counter timers. The waveform advances continuously, providing immediate visual feedback when local network bandwidth is saturated by downloads or speedtests.
+2. **On-Demand 35-Datacenter Re-Probe with Animated Progress Modal:** Clicking **🔄 RE-PROBE PING** immediately presents an animated progress bar overlay (`show_route_loading`), dispatching concurrent queries across all 35 global transit points in parallel via `ThreadPoolExecutor(max_workers=35)`. Upon measurement completion, the 35-datacenter matrix and checkbox topologies update cleanly, and the progress modal dismisses.
+3. **100% Unadulterated Physical Measurements:** Zero synthetic jitter, mathematical clamping, or simulated variance. Every millisecond, jitter value, and packet loss metric originates from physical kernel socket timers and native ICMP hardware replies (`min <= avg <= max` mathematically guaranteed).
+4. **Targeted Gateway Edge Routing (`probe_host`):** Automatically resolves edge gateway hosts (e.g. Cloudflare edge relays for Riot Direct nodes that drop raw ICMP) to guarantee responsive round-trip times and eliminate flatline freezes.
 
 ### 2.2 WFP ALE Firewall Isolation (`program=` ALE Binding)
 PulseGPN isolates game network traffic from competing datacenter regions (e.g. routing NA-East while quarantining Oceania, Europe, and Asia) using Windows Defender Firewall (`netsh advfirewall`):
