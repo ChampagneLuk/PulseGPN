@@ -239,7 +239,7 @@ BACKGROUND_THROTTLE_TARGETS = [
 FPS_BOOST_TWEAKS = [
     ("ifeo_prio", "High CPU, I/O & Page Priority for Game Binary", "Configures Image File Execution Options (PerfOptions: CpuPriorityClass=3, IoPriority=3, PagePriority=5)"),
     ("network_throttling", "Disable NDIS Multimedia Network Throttling", "Sets HKLM\\...\\Multimedia\\SystemProfile\\NetworkThrottlingIndex = 0xFFFFFFFF (unlimited packet throughput)"),
-    ("sys_responsiveness", "SystemResponsiveness = 0% (100% Gaming Clock Cycles)", "Allocates 100% low-latency CPU cycles exclusively to multimedia and competitive gaming engines"),
+    ("sys_responsiveness", "SystemResponsiveness = 10% (Valor Mínimo Real sin Clamp a 20)", "Asigna 90% de ciclos de CPU a juegos (10 decimal es el mínimo real en Windows; 0 se clampea a 20)"),
     ("win32_prio", "Win32PrioritySeparation = 0x26 (Short Fixed Quantum)", "Optimizes NT kernel scheduler for maximum responsiveness on foreground game windows"),
     ("gamedvr_off", "Disable Xbox GameBar & Background DVR Capture", "Eliminates DWM recording hooks (AppCaptureEnabled=0, GameDVR_Enabled=0)"),
     ("fso_bypass", "Disable Fullscreen Optimizations (FSO Bypass)", "Forces native Exclusive Fullscreen / Hardware Flip Model bypass (GameDVR_FSEBehavior=2)"),
@@ -253,7 +253,7 @@ FPS_BOOST_TWEAKS = [
     ("large_page_heap", "Large System Cache & Page Heap Optimization", "Configures LargeSystemCache=1 and optimizes system paging buffer for high-framerate rendering"),
     ("exitlag_rsc_lso", "ExitLag Bufferbloat Killer (Disable RSC & LSO Offloads)", "Disables Receive Segment Coalescing & Large Send Offload preventing 15ms hardware packet batching"),
     ("exitlag_tunnels", "ExitLag IPv6 Tunnel Killer (6to4, Teredo, ISATAP Disabled)", "Eliminates virtual encapsulation tunnels via netsh to guarantee direct line-rate packet flow"),
-    ("exitlag_timer", "ExitLag 0.50ms High-Precision System Timer (NtSetTimerResolution)", "Accelerates Winsock / AFD socket polling from 15.6ms down to 500us sub-millisecond precision"),
+    ("exitlag_timer", "Control de Timer Resolution (Modo Manual / Usuario Elige ms)", "Permite ajustar la resolución NT manualmente de 0.50ms a 15.6ms (nunca forzado de forma automática)"),
     ("exitlag_tcp_stack", "ExitLag Global TCP/IP Stack (FastOpen, RSS, No-Timestamps)", "Disables heuristics and timestamps while enabling RSS, FastOpen, and MinRTO=300ms"),
 ]
 
@@ -500,6 +500,13 @@ class PulseGpnCore:
         self.system_telemetry_pid = None
         self.custom_game_paths = {}
         self.load_custom_game_paths()
+        self.custom_timer_resolution_ms = None
+        try:
+            saved_tr = self.load_user_preference("custom_timer_resolution_ms", "0.0")
+            if saved_tr and float(saved_tr) > 0.0:
+                self.custom_timer_resolution_ms = float(saved_tr)
+        except Exception:
+            pass
         self.sync_from_storage_db()
         self.detect_conflicting_gpn_process()
 
@@ -512,6 +519,98 @@ class PulseGpnCore:
         p_db = os.path.join(db_dir, "pulse_storage.db")
         conn = sqlite3.connect(p_db)
         return conn
+
+    def _init_user_preferences_table(self):
+        try:
+            conn = self._get_pulse_db_conn()
+            c = conn.cursor()
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS user_preferences (
+                    pref_key TEXT PRIMARY KEY,
+                    pref_value TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+
+    def save_user_preference(self, key, value):
+        self._init_user_preferences_table()
+        try:
+            conn = self._get_pulse_db_conn()
+            c = conn.cursor()
+            c.execute("""
+                INSERT OR REPLACE INTO user_preferences (pref_key, pref_value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+            """, (str(key), str(value)))
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+
+    def load_user_preference(self, key, default=None):
+        self._init_user_preferences_table()
+        try:
+            conn = self._get_pulse_db_conn()
+            c = conn.cursor()
+            c.execute("SELECT pref_value FROM user_preferences WHERE pref_key=?", (str(key),))
+            row = c.fetchone()
+            conn.close()
+            if row and row[0] is not None:
+                return row[0]
+        except Exception:
+            pass
+        return default
+
+    def query_system_timer_resolution(self):
+        """Returns (finest_ms, coarsest_ms, current_ms) tuple via NtQueryTimerResolution."""
+        try:
+            ntdll = ctypes.WinDLL("ntdll.dll")
+            min_res = ctypes.c_ulong()
+            max_res = ctypes.c_ulong()
+            cur_res = ctypes.c_ulong()
+            ntdll.NtQueryTimerResolution(ctypes.byref(min_res), ctypes.byref(max_res), ctypes.byref(cur_res))
+            coarsest_ms = min_res.value / 10000.0
+            finest_ms = max_res.value / 10000.0
+            cur_ms = cur_res.value / 10000.0
+            return finest_ms, coarsest_ms, cur_ms
+        except Exception:
+            return 0.50, 15.625, 1.0
+
+    def set_system_timer_resolution(self, val_ms):
+        """Sets custom user-defined timer resolution in milliseconds."""
+        try:
+            val_f = float(val_ms)
+            val_100ns = int(round(val_f * 10000.0))
+            ntdll = ctypes.WinDLL("ntdll.dll")
+            actual = ctypes.c_ulong()
+            status = ntdll.NtSetTimerResolution(val_100ns, 1, ctypes.byref(actual))
+            self.custom_timer_resolution_ms = val_f
+            self.save_user_preference("custom_timer_resolution_ms", str(val_f))
+            actual_ms = actual.value / 10000.0
+            self.log(f"[TimerResolution] ✔ Temporizador NT ajustado manualmente a {val_f:.2f} ms (Actual en kernel: {actual_ms:.2f} ms).")
+            return True, actual_ms
+        except Exception as e:
+            self.log(f"[TimerResolution] Error ajustando temporizador a {val_ms} ms: {e}")
+            return False, 0.0
+
+    def reset_system_timer_resolution(self):
+        """Releases custom timer resolution and restores system default."""
+        try:
+            ntdll = ctypes.WinDLL("ntdll.dll")
+            actual = ctypes.c_ulong()
+            val_100ns = int(round((getattr(self, "custom_timer_resolution_ms", None) or 0.50) * 10000.0))
+            ntdll.NtSetTimerResolution(val_100ns, 0, ctypes.byref(actual))
+            self.custom_timer_resolution_ms = None
+            self.save_user_preference("custom_timer_resolution_ms", "0.0")
+            finest, coarsest, cur = self.query_system_timer_resolution()
+            self.log(f"[TimerResolution] ↺ Temporizador NT liberado al valor predeterminado del sistema ({cur:.2f} ms).")
+            return True, cur
+        except Exception as e:
+            self.log(f"[TimerResolution] Error restableciendo temporizador: {e}")
+            return False, 0.0
 
     def _init_custom_paths_table(self):
         try:
@@ -2308,7 +2407,7 @@ class PulseGpnCore:
         try:
             k = winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile", 0, winreg.KEY_SET_VALUE)
             winreg.SetValueEx(k, "NetworkThrottlingIndex", 0, winreg.REG_DWORD, 0xFFFFFFFF)
-            winreg.SetValueEx(k, "SystemResponsiveness", 0, winreg.REG_DWORD, 0)
+            winreg.SetValueEx(k, "SystemResponsiveness", 0, winreg.REG_DWORD, 10)
             winreg.CloseKey(k)
         except Exception:
             pass
@@ -2478,15 +2577,19 @@ class PulseGpnCore:
         except Exception as e:
             self.log(f"[ExitLagEngine] Aviso en des-estacionamiento de núcleos CPU: {e}")
 
-        # 5. 0.50ms High-Precision System Timer (enableInputLagReducer)
-        try:
-            ntdll = ctypes.WinDLL("ntdll.dll")
-            actual = ctypes.c_ulong()
-            status = ntdll.NtSetTimerResolution(5000, 1, ctypes.byref(actual))
-            if status == 0:
-                self.log(f"[ExitLagEngine] ✔ Temporizador NT fijado a ultra-resolución: {actual.value / 10000.0:.2f} ms (Winsock polling acelerado).")
-        except Exception as e:
-            self.log(f"[ExitLagEngine] Aviso en temporizador de alta precisión: {e}")
+        # 5. Timer Resolution (Modo Manual: NO se fuerza de forma automática)
+        # Nota: Por especificación del operador, no se fuerza automáticamente.
+        # Solo se aplica si el usuario configuró explícitamente un valor personalizado.
+        if getattr(self, "custom_timer_resolution_ms", None) and self.custom_timer_resolution_ms > 0:
+            try:
+                ntdll = ctypes.WinDLL("ntdll.dll")
+                actual = ctypes.c_ulong()
+                ntdll.NtSetTimerResolution(int(round(self.custom_timer_resolution_ms * 10000.0)), 1, ctypes.byref(actual))
+                self.log(f"[TimerResolution] ✔ Temporizador NT activo según configuración manual del usuario: {self.custom_timer_resolution_ms:.2f} ms.")
+            except Exception:
+                pass
+        else:
+            self.log("[TimerResolution] ℹ Temporizador NT mantenido en modo manual (sin forzar valor automático).")
 
         # 6. Delivery Optimization & System Profiling
         try:
@@ -2511,7 +2614,7 @@ class PulseGpnCore:
         try:
             k = winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile", 0, winreg.KEY_SET_VALUE)
             winreg.SetValueEx(k, "NetworkThrottlingIndex", 0, winreg.REG_DWORD, 0xFFFFFFFF)
-            winreg.SetValueEx(k, "SystemResponsiveness", 0, winreg.REG_DWORD, 0)
+            winreg.SetValueEx(k, "SystemResponsiveness", 0, winreg.REG_DWORD, 10)
             winreg.CloseKey(k)
 
             kg = winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games", 0, winreg.KEY_SET_VALUE)
@@ -2523,7 +2626,7 @@ class PulseGpnCore:
             winreg.SetValueEx(kg, "Scheduling Category", 0, winreg.REG_SZ, "High")
             winreg.SetValueEx(kg, "SFIO Priority", 0, winreg.REG_SZ, "High")
             winreg.CloseKey(kg)
-            self.log("[ExitLagEngine] ✔ Multimedia Profile: NetworkThrottlingIndex=0xFFFFFFFF, Responsiveness=0 (100% CPU time a juegos).")
+            self.log("[ExitLagEngine] ✔ Multimedia Profile: NetworkThrottlingIndex=0xFFFFFFFF, SystemResponsiveness=10 (90% CPU time a juegos, valor mínimo sin clamp de 20).")
         except Exception as e:
             self.log(f"[ExitLagEngine] Aviso en perfiles multimedia: {e}")
 
@@ -3685,6 +3788,14 @@ class PulseGpnApp:
         )
         self.exitlag_tweak_btn.pack(side="left", padx=4)
 
+        self.top_timer_res_btn = tk.Button(
+            top_nav_bar, text="⏱ TIMER: MANUAL", bg="#1a1e24", fg="#38bdf8",
+            activebackground="#30363d", activeforeground="#ffffff",
+            font=("Segoe UI", 8, "bold"), bd=1, relief="solid", highlightthickness=0,
+            padx=8, pady=3, cursor="hand2", command=self.open_timer_resolution_dialog
+        )
+        self.top_timer_res_btn.pack(side="left", padx=4)
+
         self.tuner_status_pill = tk.Label(
             top_nav_bar, text="● OPTIMIZED ROUTE ACTIVE", bg="#0d2818", fg="#10b981",
             font=("Segoe UI", 9, "bold"), padx=10, pady=4
@@ -3877,7 +3988,7 @@ class PulseGpnApp:
         top = ttk.Frame(card, style="Card.TFrame")
         top.pack(fill="x", padx=16, pady=12)
         ttk.Label(top, text="🚀 FPS BOOST // NT KERNEL, GPU SCHEDULER & UNREAL ENGINE OPTIMIZER", style="CardTitle.TLabel").pack(side="left")
-        ttk.Button(top, text="⚡ APPLY ALL 14 FPS BOOST TWEAKS", style="Red.TButton", command=self.run_all_fps_boost).pack(side="right")
+        ttk.Button(top, text="⚡ APPLY ALL 18 SYSTEM & FPS BOOST TWEAKS", style="Red.TButton", command=self.run_all_fps_boost).pack(side="right")
 
         grid_frame = ttk.Frame(card, style="Card.TFrame")
         grid_frame.pack(fill="both", expand=True, padx=16, pady=4)
@@ -3897,6 +4008,48 @@ class PulseGpnApp:
             )
             cb.pack(fill="x")
             tk.Label(row_f, text=desc, bg="#21262d", fg="#8b949e", font=("Consolas", 8), anchor="w").pack(fill="x", padx=22)
+
+        # Timer Resolution Interactive Box (Manual User Control)
+        timer_box = tk.Frame(card, bg="#161b22", padx=16, pady=12, highlightthickness=1, highlightbackground="#30363d")
+        timer_box.pack(fill="x", padx=16, pady=(10, 14))
+
+        t_header = tk.Frame(timer_box, bg="#161b22")
+        t_header.pack(fill="x", pady=(0, 6))
+
+        tk.Label(t_header, text="⏱ NT TIMER RESOLUTION (MODO MANUAL // CONTROL PERSONALIZADO)", bg="#161b22", fg="#ffffff", font=("Segoe UI", 10, "bold")).pack(side="left")
+
+        self.timer_res_status_lbl = tk.Label(
+            t_header, text="● Estado: Consultando...", bg="#0d2238", fg="#38bdf8",
+            font=("Segoe UI", 9, "bold"), padx=8, pady=3
+        )
+        self.timer_res_status_lbl.pack(side="right")
+
+        t_body = tk.Frame(timer_box, bg="#161b22")
+        t_body.pack(fill="x", pady=4)
+
+        tk.Label(t_body, text="Preajustes rápidos:", bg="#161b22", fg="#8b949e", font=("Segoe UI", 9)).pack(side="left", padx=(0, 8))
+
+        ttk.Button(t_body, text="⚡ 0.50 ms (Máx Precisión)", style="Cyan.TButton", command=lambda: self.apply_timer_res_ui(0.50)).pack(side="left", padx=3)
+        ttk.Button(t_body, text="⚡ 0.75 ms", style="Dark.TButton", command=lambda: self.apply_timer_res_ui(0.75)).pack(side="left", padx=3)
+        ttk.Button(t_body, text="⚡ 1.00 ms", style="Dark.TButton", command=lambda: self.apply_timer_res_ui(1.00)).pack(side="left", padx=3)
+        ttk.Button(t_body, text="↺ Restaurar Default (15.6 ms)", style="Dark.TButton", command=self.reset_timer_res_ui).pack(side="left", padx=3)
+
+        t_custom = tk.Frame(timer_box, bg="#161b22")
+        t_custom.pack(fill="x", pady=(8, 2))
+
+        tk.Label(t_custom, text="Valor Personalizado (ms):", bg="#161b22", fg="#c9d1d9", font=("Segoe UI", 9)).pack(side="left", padx=(0, 6))
+
+        self.custom_timer_entry = tk.Entry(t_custom, width=8, bg="#0d1117", fg="#ffffff", insertbackground="#38bdf8", font=("Consolas", 10), justify="center")
+        self.custom_timer_entry.insert(0, "0.50")
+        self.custom_timer_entry.pack(side="left", padx=4)
+
+        ttk.Button(t_custom, text="✔ APLICAR VALOR", style="Red.TButton", command=self.apply_custom_timer_entry_ui).pack(side="left", padx=6)
+
+        tk.Label(
+            t_custom,
+            text="* Control Manual: no se fuerza automáticamente; tú eliges la frecuencia de sondeo exacta.",
+            bg="#161b22", fg="#8b949e", font=("Segoe UI", 8, "italic")
+        ).pack(side="left", padx=10)
 
     # --------------------------------------------------------------------------
     # PAGE 4: TRAFFIC SHAPER (WFP DSCP 46 + BACKGROUND THROTTLER)
@@ -4808,9 +4961,52 @@ class PulseGpnApp:
             self.core.apply_exitlag_low_latency_stack(exe)
             def update():
                 self.tuner_status_pill.config(text="● EXITLAG ULTRA-PING ACTIVE", bg="#0d2818", fg="#10b981")
-                self.append_log("[ExitLagEngine] ✔ Suite ExitLag activa: RSC/LSO OFF, EEE OFF, 0.5ms Timer, CPU Unparked, IPv6 Tunnels eliminados.")
+                self.append_log("[ExitLagEngine] ✔ Suite ExitLag activa: RSC/LSO OFF, EEE OFF, SystemResponsiveness=10, CPU Unparked, IPv6 Tunnels eliminados.")
             self.dispatch_ui(update)
         threading.Thread(target=worker, daemon=True).start()
+
+    def refresh_timer_res_status(self):
+        finest, coarsest, cur = self.core.query_system_timer_resolution()
+        cust = getattr(self.core, "custom_timer_resolution_ms", None)
+        mode_str = f"MANUAL ({cust:.2f} ms)" if (cust and cust > 0) else f"ACTUAL: {cur:.2f} ms"
+        if hasattr(self, "timer_res_status_lbl"):
+            self.timer_res_status_lbl.config(
+                text=f"● Estado: {cur:.2f} ms (Rango HW: {finest:.2f} ms – {coarsest:.2f} ms)",
+                bg="#0d2818" if (cust and cust > 0) else "#0d2238",
+                fg="#10b981" if (cust and cust > 0) else "#38bdf8"
+            )
+        if hasattr(self, "top_timer_res_btn"):
+            self.top_timer_res_btn.config(
+                text=f"⏱ TIMER: {mode_str}",
+                fg="#10b981" if (cust and cust > 0) else "#38bdf8"
+            )
+
+    def apply_timer_res_ui(self, val_ms):
+        ok, actual = self.core.set_system_timer_resolution(val_ms)
+        self.refresh_timer_res_status()
+        if hasattr(self, "custom_timer_entry"):
+            self.custom_timer_entry.delete(0, "end")
+            self.custom_timer_entry.insert(0, f"{val_ms:.2f}")
+
+    def reset_timer_res_ui(self):
+        ok, actual = self.core.reset_system_timer_resolution()
+        self.refresh_timer_res_status()
+
+    def apply_custom_timer_entry_ui(self):
+        try:
+            txt = self.custom_timer_entry.get().strip()
+            val = float(txt)
+            if val < 0.5:
+                val = 0.5
+            elif val > 15.625:
+                val = 15.625
+            self.apply_timer_res_ui(val)
+        except Exception as e:
+            messagebox.showwarning("Valor Inválido", f"Por favor ingresa un número decimal válido en milisegundos (ej. 0.50, 0.75, 1.00).\nError: {e}")
+
+    def open_timer_resolution_dialog(self):
+        self.switch_page("fps_boost")
+        self.refresh_timer_res_status()
 
     def RefreshNICTable(self):
         ifs = self.core.get_active_interfaces()
@@ -4910,6 +5106,7 @@ class PulseGpnApp:
 
     def initial_startup_auto_analysis(self):
         self.RefreshNICTable()
+        self.refresh_timer_res_status()
         threading.Thread(
             target=self.core.repair_fortnite_invalid_backend_and_shortcut,
             kwargs={"force_check_shortcut": True},
