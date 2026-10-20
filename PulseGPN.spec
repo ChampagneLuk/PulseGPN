@@ -1,11 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 a = Analysis(
-    ['C:/Users/Administrator/Desktop/PulseGPN.py'],
+    ['C:/Users/Administrator/Desktop/PulseGPN/PulseGPN.py'],
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=['queue', 'psutil', 'ctypes'],
+    hiddenimports=['queue', 'psutil', 'ctypes', 'pystray', 'PIL', 'PIL._imagingtk', 'PIL.Image', 'PIL.ImageDraw'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

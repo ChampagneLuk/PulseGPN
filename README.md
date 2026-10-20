@@ -61,6 +61,12 @@ Discovers installed competitive titles across all mounted storage volumes withou
 - **Startup Splash Screen (`PulseGpnSplashScreen`):** Frameless, top-level centered dark window (`540x300`) displaying a progress bar (`0% → 100%`) while concurrently initializing SQLite schemas, scanning host drives, and preparing the WFP QoS pipeline.
 - **In-App Route Optimization Modal:** When switching to Route Tuner or selecting a title, the content area renders an indeterminate cybernetic loading overlay. Kernel routing and firewall bindings are offloaded to background threads, polling results into the Tkinter main loop via `queue.Queue` at 60 FPS without GUI freezing.
 
+### 2.5 Windows Notification Area Integration (Minimize to Tray)
+To ensure gaming traffic optimization remains persistent without occupying taskbar space:
+- **Automatic Tray Minimization:** Intercepts `<Unmap>` (minimize `_` button) and `WM_DELETE_WINDOW` (`X` button) to smoothly withdraw the window to the system notification area while kernel route pinning and packet deduplication continue in the background.
+- **Dedicated Top-Bar Button:** An accessible `[📥 TRAY]` button on the main header provides instant one-click minimization.
+- **Rich Context Menu & Fast Restore:** Right-clicking the cybernetic tray badge surfaces direct controls (`⚡ Abrir PulseGPN`, `⏸ Pausar / Reanudar Gráfica`, `📥 Minimizar a Bandeja`, `✕ Salir por Completo`). Left-clicking or double-clicking the tray icon restores the interface immediately to the foreground.
+
 ---
 
 ## 3. Global Datacenter Topology Matrix (35 Gateways)

@@ -34,6 +34,13 @@ import winreg
 import tkinter as tk
 from tkinter import ttk
 
+try:
+    import pystray
+    from PIL import Image, ImageDraw
+    PYSTRAY_AVAILABLE = True
+except Exception:
+    PYSTRAY_AVAILABLE = False
+
 # ==============================================================================
 # 0. NAMED RUNTIME CONFIGURATION & SYSTEM HANDLES (NO FABRICATED CONSTANTS)
 # ==============================================================================
@@ -2563,6 +2570,21 @@ class PulseGpnReprobeModal:
         except Exception:
             pass
 
+def generate_pulse_gpn_tray_icon():
+    """
+    Generates a high-contrast cybernetic red/cyan 64x64 icon for Windows System Notification Tray.
+    """
+    try:
+        from PIL import Image, ImageDraw
+        img = Image.new("RGBA", (64, 64), color=(0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        draw.ellipse((2, 2, 62, 62), fill="#0d1117", outline="#ff2247", width=3)
+        points = [(36, 10), (18, 35), (32, 35), (26, 54), (48, 27), (34, 27)]
+        draw.polygon(points, fill="#ff2247")
+        return img
+    except Exception:
+        return None
+
 class PulseGpnApp:
     def __init__(self, root, core=None, all_games=None, installed_games=None):
         self.root = root
@@ -2593,6 +2615,8 @@ class PulseGpnApp:
         self.route_chk_buttons = {}
         self.live_graph_active = True
         self.active_reprobe_modal = None
+        self.tray_icon = None
+        self._init_system_tray()
         self.route_result_queue = queue.Queue()
         self.telemetry_sample_queue = queue.Queue(maxsize=40)
         threading.Thread(target=self._live_telemetry_prober_worker, daemon=True).start()
@@ -2690,7 +2714,21 @@ class PulseGpnApp:
             top_bar, text="CURRENT LATENCY: 56.0 ms", bg="#21262d", fg="#38bdf8",
             font=("Consolas", 11, "bold"), padx=12, pady=4
         )
-        self.live_ping_badge.pack(side="right", padx=16)
+        self.live_ping_badge.pack(side="right", padx=(8, 16))
+
+        tray_btn = tk.Button(
+            top_bar, text="📥 TRAY",
+            bg="#21262d", fg="#8b949e",
+            activebackground="#30363d", activeforeground="#ffffff",
+            font=("Segoe UI", 9, "bold"),
+            bd=1, relief="solid", highlightthickness=0,
+            padx=8, pady=3, cursor="hand2",
+            command=self.minimize_to_tray
+        )
+        tray_btn.pack(side="right", padx=(0, 4))
+
+        self.root.protocol("WM_DELETE_WINDOW", self.on_window_close)
+        self.root.bind("<Unmap>", self._on_window_unmap)
 
         # 2. Main Body Container
         body = ttk.Frame(self.root)
@@ -3822,6 +3860,96 @@ class PulseGpnApp:
     # --------------------------------------------------------------------------
     # TICKERS & REAL-TIME BACKGROUND MONITORING
     # --------------------------------------------------------------------------
+    def _init_system_tray(self):
+        """
+        Initializes background Windows notification area (System Tray) icon.
+        Allows seamless background execution with persistent routing and telemetry.
+        """
+        if not PYSTRAY_AVAILABLE:
+            return
+        try:
+            img = generate_pulse_gpn_tray_icon()
+            if not img:
+                return
+
+            menu = pystray.Menu(
+                pystray.MenuItem("⚡ Abrir PulseGPN", lambda icon, item: self.root.after(0, self.restore_from_tray), default=True),
+                pystray.MenuItem("⏸ Pausar / Reanudar Gráfica", lambda icon, item: self.root.after(0, self.toggle_live_telemetry_graph)),
+                pystray.MenuItem("📥 Minimizar a Bandeja", lambda icon, item: self.root.after(0, self.minimize_to_tray)),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("✕ Salir por Completo", lambda icon, item: self.root.after(0, self.exit_application))
+            )
+
+            self.tray_icon = pystray.Icon(
+                "PulseGPN",
+                img,
+                "PulseGPN Pro v1.0 // Gamer Private Network",
+                menu
+            )
+            self.tray_icon.run_detached()
+        except Exception as e:
+            self.append_log(f"[SystemTray] Note: {e}")
+
+    def _on_window_unmap(self, event=None):
+        if event and event.widget == self.root:
+            try:
+                if self.root.state() == "iconic":
+                    self.root.after(10, self.minimize_to_tray)
+            except Exception:
+                pass
+
+    def minimize_to_tray(self):
+        """
+        Hides window from taskbar and keeps PulseGPN kernel routing engine active in background.
+        """
+        try:
+            self.root.withdraw()
+            self.append_log("[System] PulseGPN minimizado a la bandeja del sistema (sigue activo en segundo plano).")
+            if getattr(self, "tray_icon", None):
+                try:
+                    self.tray_icon.notify(
+                        "PulseGPN continúa optimizando tu conexión y enrutamiento en segundo plano.",
+                        "PulseGPN Pro v1.0"
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def restore_from_tray(self):
+        """
+        Restores window to foreground from the system tray.
+        """
+        try:
+            self.root.deiconify()
+            self.root.state("normal")
+            self.root.lift()
+            self.root.focus_force()
+            self.append_log("[System] Ventana de PulseGPN restaurada desde la bandeja.")
+        except Exception:
+            pass
+
+    def on_window_close(self):
+        """
+        Intercepts window close event ('X' button) to minimize to tray instead of abruptly dropping routes.
+        """
+        self.minimize_to_tray()
+
+    def exit_application(self):
+        """
+        Completely shuts down PulseGPN, releases kernel routes/QoS, stops the tray icon, and exits.
+        """
+        self.append_log("[Shutdown] Deteniendo PulseGPN y liberando recursos de red...")
+        if getattr(self, "tray_icon", None):
+            try:
+                self.tray_icon.stop()
+            except Exception:
+                pass
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+
     def toggle_live_telemetry_graph(self):
         """
         Toggles real-time hardware telemetry graph prober and rendering loop.
