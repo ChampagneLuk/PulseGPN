@@ -179,29 +179,29 @@ KNOWN_GAME_PROFILES = {
         "preferred_dcs": [2129, 2131, 2138, 3415, 2133, 2605, 2120],
         "subnets": ["3.237.229.0/24", "44.192.142.0/24", "18.88.1.0/24", "3.129.132.0/24", "78.12.119.0/24"],
     },
-    "bloodstrike": {"title": "Blood Strike (NetEase Messiah Engine)", "exe": "BloodStrike.exe", "ports": "UDP 10000-20000 / TCP 443", "preferred_dcs": [2133, 3565, 2129, 2131, 2120], "subnets": ["52.94.0.0/24", "104.160.131.0/24", "13.107.42.0/24"]},
+    "bloodstrike": {"title": "Blood Strike (NetEase Messiah Engine)", "exe": "BloodStrike.exe", "extra_exes": ["launcher.exe", "steam.exe"], "ports": "UDP 10000-20000 / TCP 443", "preferred_dcs": [2133, 3565, 2129, 2131, 2120], "subnets": ["52.94.0.0/24", "104.160.131.0/24", "13.107.42.0/24"]},
     "valorant": {"title": "Valorant (Riot Direct)", "exe": "VALORANT-Win64-Shipping.exe", "extra_exes": ["VALORANT.exe", "RiotClientServices.exe", "RiotClientUx.exe"], "ports": "UDP 7000-8000 / TCP 443", "preferred_dcs": [2133, 3415, 3565, 2131, 2130, 2606], "subnets": ["104.160.131.0/24", "192.207.0.0/24"]},
     "lol": {"title": "League of Legends (Riot Direct)", "exe": "League of Legends.exe", "extra_exes": ["LeagueClient.exe", "LeagueClientUx.exe", "RiotClientServices.exe"], "ports": "UDP 5000-5500 / TCP 2099", "preferred_dcs": [2133, 2130, 3415, 2120, 3570], "subnets": ["104.160.131.0/24", "104.160.136.0/24"]},
     "teamfight_tactics": {"title": "Teamfight Tactics (Riot Direct)", "exe": "League of Legends.exe", "ports": "UDP 5000-5500", "preferred_dcs": [2133, 2130, 3415], "subnets": ["104.160.131.0/24", "104.160.136.0/24"]},
     "cs2": {"title": "Counter-Strike 2 (Valve SDR)", "exe": "cs2.exe", "extra_exes": ["counter-strike2.exe", "csgo.exe", "steam.exe"], "ports": "UDP 27015-27060", "preferred_dcs": [3565, 2129, 2130, 2131, 2607, 3570], "subnets": ["162.254.192.0/24", "162.254.193.0/24", "162.254.195.0/24", "155.133.249.0/24"]},
-    "dota2": {"title": "Dota 2 (Valve SDR)", "exe": "dota2.exe", "ports": "UDP 27015-28999", "preferred_dcs": [2129, 2607, 2120, 3570], "subnets": ["162.254.192.0/24", "190.217.33.0/24", "155.133.249.0/24"]},
-    "deadlock": {"title": "Deadlock (Valve SDR)", "exe": "project8.exe", "ports": "UDP 27015-27060", "preferred_dcs": [2129, 2130, 2131], "subnets": ["162.254.192.0/24", "162.254.193.0/24"]},
+    "dota2": {"title": "Dota 2 (Valve SDR)", "exe": "dota2.exe", "extra_exes": ["steam.exe", "dota.exe"], "ports": "UDP 27015-28999", "preferred_dcs": [2129, 2607, 2120, 3570], "subnets": ["162.254.192.0/24", "190.217.33.0/24", "155.133.249.0/24"]},
+    "deadlock": {"title": "Deadlock (Valve SDR)", "exe": "project8.exe", "extra_exes": ["steam.exe"], "ports": "UDP 27015-27060", "preferred_dcs": [2129, 2130, 2131], "subnets": ["162.254.192.0/24", "162.254.193.0/24"]},
     "tibia": {"title": "Tibia (CipSoft / Cloudflare Spectrum)", "exe": "client.exe", "ports": "TCP 7171-7172", "preferred_dcs": [2133, 3565, 2129, 2120, 3529], "subnets": ["172.65.208.0/24", "172.65.224.0/24", "52.95.164.0/24"]},
     "poketibia": {"title": "PokeTibia", "exe": "pxgclient.exe", "ports": "TCP 7171-7172", "preferred_dcs": [2133, 2129, 2120], "subnets": ["52.95.164.0/24", "172.65.208.0/24"]},
-    "wow": {"title": "World of Warcraft (Retail)", "exe": "Wow.exe", "ports": "TCP/UDP 3724, 1119", "preferred_dcs": [2130, 2134, 2129], "subnets": ["24.105.30.0/24", "24.105.62.0/24", "137.221.105.0/24", "37.244.28.0/24"]},
-    "world_of_warcraft_classic": {"title": "World of Warcraft Classic", "exe": "WowClassic.exe", "ports": "TCP/UDP 3724, 1119", "preferred_dcs": [2130, 2134, 2129], "subnets": ["24.105.30.0/24", "24.105.62.0/24", "137.221.105.0/24"]},
-    "diabloiii": {"title": "Diablo III / Diablo IV", "exe": "Diablo IV.exe", "ports": "UDP 6112-6120", "preferred_dcs": [2130, 2134, 2129], "subnets": ["24.105.30.0/24", "24.105.62.0/24"]},
-    "overwatch": {"title": "Overwatch 2 (Blizzard)", "exe": "Overwatch.exe", "ports": "UDP 26503-36503", "preferred_dcs": [2130, 2134, 2129, 2120], "subnets": ["24.105.30.0/24", "24.105.62.0/24", "37.244.28.0/24"]},
-    "cod": {"title": "Call of Duty: Warzone / BO6", "exe": "cod.exe", "ports": "UDP 3074, 30000-45000", "preferred_dcs": [2133, 3565, 2129, 2131, 2130], "subnets": ["24.105.30.0/24", "24.105.62.0/24", "185.34.107.0/24"]},
-    "apex": {"title": "Apex Legends (EA Multiplay)", "exe": "r5apex.exe", "ports": "UDP 37005-38015", "preferred_dcs": [2129, 2131, 2130, 2120], "subnets": ["159.153.64.0/24", "159.153.92.0/24", "52.94.0.0/24"]},
+    "wow": {"title": "World of Warcraft (Retail)", "exe": "Wow.exe", "extra_exes": ["Battle.net.exe", "Agent.exe"], "ports": "TCP/UDP 3724, 1119", "preferred_dcs": [2130, 2134, 2129], "subnets": ["24.105.30.0/24", "24.105.62.0/24", "137.221.105.0/24", "37.244.28.0/24"]},
+    "world_of_warcraft_classic": {"title": "World of Warcraft Classic", "exe": "WowClassic.exe", "extra_exes": ["Battle.net.exe", "Agent.exe"], "ports": "TCP/UDP 3724, 1119", "preferred_dcs": [2130, 2134, 2129], "subnets": ["24.105.30.0/24", "24.105.62.0/24", "137.221.105.0/24"]},
+    "diabloiii": {"title": "Diablo III / Diablo IV", "exe": "Diablo IV.exe", "extra_exes": ["Battle.net.exe", "Agent.exe"], "ports": "UDP 6112-6120", "preferred_dcs": [2130, 2134, 2129], "subnets": ["24.105.30.0/24", "24.105.62.0/24"]},
+    "overwatch": {"title": "Overwatch 2 (Blizzard)", "exe": "Overwatch.exe", "extra_exes": ["Battle.net.exe", "Agent.exe"], "ports": "UDP 26503-36503", "preferred_dcs": [2130, 2134, 2129, 2120], "subnets": ["24.105.30.0/24", "24.105.62.0/24", "37.244.28.0/24"]},
+    "cod": {"title": "Call of Duty: Warzone / BO6", "exe": "cod.exe", "extra_exes": ["bootstrapper.exe", "Battle.net.exe", "steam.exe", "cod22-cod.exe", "sp23-cod.exe"], "ports": "UDP 3074, 30000-45000", "preferred_dcs": [2133, 3565, 2129, 2131, 2130], "subnets": ["24.105.30.0/24", "24.105.62.0/24", "185.34.107.0/24"]},
+    "apex": {"title": "Apex Legends (EA Multiplay)", "exe": "r5apex.exe", "extra_exes": ["r5apex_dx12.exe", "EasyAntiCheat.exe", "EADesktop.exe", "steam.exe"], "ports": "UDP 37005-38015", "preferred_dcs": [2129, 2131, 2130, 2120], "subnets": ["159.153.64.0/24", "159.153.92.0/24", "52.94.0.0/24"]},
     "albion": {"title": "Albion Online (Americas / Europe / Asia)", "exe": "Albion-Online.exe", "ports": "UDP 5055-5058", "preferred_dcs": [2129, 2135, 2121, 2128], "subnets": ["5.188.125.0/24", "5.45.187.0/24"]},
     "final_fantasy_xiv": {"title": "Final Fantasy XIV (Square Enix)", "exe": "ffxiv_dx11.exe", "ports": "TCP 54992-55551", "preferred_dcs": [2605, 2134, 2121, 2124], "subnets": ["204.2.29.0/24", "153.254.80.0/24", "195.82.50.0/24"]},
     "path_of_exile": {"title": "Path of Exile 1 & 2", "exe": "PathOfExileSteam.exe", "ports": "TCP 20481, 6112", "preferred_dcs": [2129, 2131, 2605, 2120], "subnets": ["169.60.156.0/24", "159.122.190.0/24"]},
     "blackdesert": {"title": "Black Desert Online", "exe": "BlackDesert64.exe", "ports": "TCP 8888-8889, 9991-9993", "preferred_dcs": [2605, 2130, 2120], "subnets": ["209.58.137.0/24", "52.94.24.0/24"]},
-    "gta5": {"title": "GTA V Online / FiveM (Cfx.re)", "exe": "GTA5.exe", "ports": "UDP 6672, 30120", "preferred_dcs": [2133, 2129, 2131, 2130], "subnets": ["185.56.65.0/24", "192.81.241.0/24"]},
-    "rocketleague": {"title": "Rocket League", "exe": "RocketLeague.exe", "ports": "UDP 7000-9000", "preferred_dcs": [2129, 3565, 2131], "subnets": ["52.94.0.0/24", "162.254.192.0/24"]},
-    "roblox": {"title": "Roblox", "exe": "RobloxPlayerBeta.exe", "ports": "UDP 49152-65535", "preferred_dcs": [2133, 3565, 2129, 2131, 2130], "subnets": ["128.116.0.0/24", "128.116.1.0/24", "128.116.5.0/24", "128.116.115.0/24"]},
-    "minecraft": {"title": "Minecraft (Java / Bedrock / Hypixel)", "exe": "javaw.exe", "ports": "TCP 25565 / UDP 19132", "preferred_dcs": [2130, 2129, 2133, 2135], "subnets": ["172.65.192.0/24", "172.65.208.0/24", "172.65.224.0/24"]},
+    "gta5": {"title": "GTA V Online / FiveM (Cfx.re)", "exe": "GTA5.exe", "extra_exes": ["FiveM.exe", "PlayGTAV.exe", "RockstarService.exe", "steam.exe"], "ports": "UDP 6672, 30120", "preferred_dcs": [2133, 2129, 2131, 2130], "subnets": ["185.56.65.0/24", "192.81.241.0/24"]},
+    "rocketleague": {"title": "Rocket League", "exe": "RocketLeague.exe", "extra_exes": ["EpicGamesLauncher.exe"], "ports": "UDP 7000-9000", "preferred_dcs": [2129, 3565, 2131], "subnets": ["52.94.0.0/24", "162.254.192.0/24"]},
+    "roblox": {"title": "Roblox", "exe": "RobloxPlayerBeta.exe", "extra_exes": ["RobloxPlayerLauncher.exe"], "ports": "UDP 49152-65535", "preferred_dcs": [2133, 3565, 2129, 2131, 2130], "subnets": ["128.116.0.0/24", "128.116.1.0/24", "128.116.5.0/24", "128.116.115.0/24"]},
+    "minecraft": {"title": "Minecraft (Java / Bedrock / Hypixel)", "exe": "javaw.exe", "extra_exes": ["Minecraft.exe"], "ports": "TCP 25565 / UDP 19132", "preferred_dcs": [2130, 2129, 2133, 2135], "subnets": ["172.65.192.0/24", "172.65.208.0/24", "172.65.224.0/24"]},
     "lineage2": {"title": "Lineage II", "exe": "L2.exe", "ports": "TCP 2106, 7777", "preferred_dcs": [2131, 2129, 2121], "subnets": ["64.25.35.0/24"]},
     "aion": {"title": "Aion / Aion Classic", "exe": "aion.bin", "ports": "TCP 2106, 7777, 10241", "preferred_dcs": [2131, 2129], "subnets": ["64.25.35.0/24"]},
     "blade_and_soul_neo": {"title": "Blade & Soul NEO", "exe": "BNSR.exe", "ports": "TCP 10100, 10241", "preferred_dcs": [2131, 2129, 2121], "subnets": ["64.25.35.0/24", "52.94.0.0/24"]},
@@ -210,16 +210,16 @@ KNOWN_GAME_PROFILES = {
     "eso": {"title": "The Elder Scrolls Online", "exe": "eso64.exe", "ports": "TCP/UDP 24100-24507", "preferred_dcs": [2131, 2129, 2121], "subnets": ["198.20.198.0/24", "159.100.232.0/24"]},
     "smite": {"title": "SMITE 1 & 2", "exe": "Smite.exe", "ports": "UDP 9000-9999", "preferred_dcs": [3565, 2129, 2131], "subnets": ["52.94.0.0/24"]},
     "wot": {"title": "World of Tanks", "exe": "WorldOfTanks.exe", "ports": "UDP 20013-20018, 32801-32825", "preferred_dcs": [2130, 2129, 2121], "subnets": ["92.223.0.0/24", "162.216.228.0/24"]},
-    "battlefield_v": {"title": "Battlefield V / 2042 / 1", "exe": "bf2042.exe", "ports": "UDP 3659, 14000-14016", "preferred_dcs": [2129, 2131, 2130], "subnets": ["159.153.64.0/24", "52.94.0.0/24"]},
+    "battlefield_v": {"title": "Battlefield V / 2042 / 1", "exe": "bf2042.exe", "extra_exes": ["EADesktop.exe", "EasyAntiCheat.exe", "steam.exe"], "ports": "UDP 3659, 14000-14016", "preferred_dcs": [2129, 2131, 2130], "subnets": ["159.153.64.0/24", "52.94.0.0/24"]},
     "crossfire": {"title": "CrossFire / CrossFire BR", "exe": "crossfire.exe", "ports": "TCP 13008 / UDP 12020-12080", "preferred_dcs": [2129, 2133, 2120], "subnets": ["52.94.0.0/24", "52.95.164.0/24"]},
     "warface": {"title": "Warface", "exe": "Game.exe", "ports": "TCP 5222 / UDP 64000-64250", "preferred_dcs": [2129, 2131, 2121], "subnets": ["52.94.0.0/24"]},
-    "pubg": {"title": "PUBG: Battlegrounds", "exe": "TslGame.exe", "ports": "UDP 7000-7999", "preferred_dcs": [2129, 2131, 3559, 2120], "subnets": ["52.94.0.0/24", "52.94.24.0/24", "52.95.164.0/24"]},
-    "rust": {"title": "Rust", "exe": "RustClient.exe", "ports": "UDP 28015-28083", "preferred_dcs": [2133, 2129, 2131, 2130], "subnets": ["162.254.192.0/24", "104.160.131.0/24"]},
-    "escape_from_tarkov": {"title": "Escape from Tarkov", "exe": "EscapeFromTarkov.exe", "ports": "UDP 17000-17100", "preferred_dcs": [2133, 2129, 2131, 2130], "subnets": ["92.223.0.0/24", "52.94.0.0/24"]},
+    "pubg": {"title": "PUBG: Battlegrounds", "exe": "TslGame.exe", "extra_exes": ["TslGame_UC.exe", "TslGame_BE.exe", "ExecPubg.exe", "steam.exe"], "ports": "UDP 7000-7999", "preferred_dcs": [2129, 2131, 3559, 2120], "subnets": ["52.94.0.0/24", "52.94.24.0/24", "52.95.164.0/24"]},
+    "rust": {"title": "Rust", "exe": "RustClient.exe", "extra_exes": ["Rust.exe", "EasyAntiCheat.exe", "steam.exe"], "ports": "UDP 28015-28083", "preferred_dcs": [2133, 2129, 2131, 2130], "subnets": ["162.254.192.0/24", "104.160.131.0/24"]},
+    "escape_from_tarkov": {"title": "Escape from Tarkov", "exe": "EscapeFromTarkov.exe", "extra_exes": ["BsgLauncher.exe"], "ports": "UDP 17000-17100", "preferred_dcs": [2133, 2129, 2131, 2130], "subnets": ["92.223.0.0/24", "52.94.0.0/24"]},
     "lost_ark": {"title": "Lost Ark (AWS)", "exe": "LOSTARK.exe", "ports": "TCP 6040", "preferred_dcs": [2129, 3559, 2120], "subnets": ["52.94.0.0/24", "52.94.24.0/24", "52.95.164.0/24"]},
     "throne_and_liberty": {"title": "Throne and Liberty", "exe": "TL.exe", "ports": "TCP/UDP 10000-10200", "preferred_dcs": [2129, 3559, 2120], "subnets": ["52.94.0.0/24", "52.94.24.0/24"]},
-    "marvel_rivals": {"title": "Marvel Rivals", "exe": "Marvel-Win64-Shipping.exe", "ports": "UDP 10000-20000", "preferred_dcs": [2129, 2131, 3559], "subnets": ["52.94.0.0/24", "13.107.42.0/24"]},
-    "rainbow_six_siege": {"title": "Tom Clancy's Rainbow Six Siege", "exe": "RainbowSix.exe", "ports": "UDP 3074, 6015", "preferred_dcs": [2129, 2131, 2130], "subnets": ["52.94.0.0/24", "13.107.42.0/24"]},
+    "marvel_rivals": {"title": "Marvel Rivals", "exe": "Marvel-Win64-Shipping.exe", "extra_exes": ["Marvel.exe", "steam.exe"], "ports": "UDP 10000-20000", "preferred_dcs": [2129, 2131, 3559], "subnets": ["52.94.0.0/24", "13.107.42.0/24"]},
+    "rainbow_six_siege": {"title": "Tom Clancy's Rainbow Six Siege", "exe": "RainbowSix.exe", "extra_exes": ["RainbowSix_Vulkan.exe", "upc.exe", "UbisoftConnect.exe", "steam.exe"], "ports": "UDP 3074, 6015", "preferred_dcs": [2129, 2131, 2130], "subnets": ["52.94.0.0/24", "13.107.42.0/24"]},
     "brawlhalla": {"title": "Brawlhalla", "exe": "Brawlhalla.exe", "ports": "UDP 23000-24000", "preferred_dcs": [3565, 2133, 2129], "subnets": ["52.94.0.0/24", "104.160.131.0/24"]},
 }
 
@@ -1497,7 +1497,19 @@ class PulseGpnCore:
             country = dc["country"]
             fn_sub = dc.get("fn_sub", "")
 
-            # Tailor name, alias, and subnets to the specific game architecture
+            # Inherit the datacenter's dedicated regional subnets and ensure self IP / probe host are included
+            dc_subnets = list(dc.get("subnets", []))
+            ip_base = dc['ip'].rsplit('.', 1)[0] + '.0/24'
+            if ip_base not in dc_subnets:
+                dc_subnets.append(ip_base)
+            if dc.get('probe_host') and dc['probe_host'] != '999.0':
+                probe_base = dc['probe_host'].rsplit('.', 1)[0] + '.0/24'
+                if probe_base not in dc_subnets:
+                    dc_subnets.append(probe_base)
+
+            dc_copy["subnets"] = dc_subnets
+
+            # Tailor name and alias to the specific game architecture
             if flavor == "epic_fn":
                 fn_tag = f"[FN: {fn_sub}]" if fn_sub else ""
                 dc_copy["region"] = f"{c_name}, {country} {fn_tag}"
@@ -1507,91 +1519,76 @@ class PulseGpnCore:
                 alias_tag = f"[Riot Direct {c_name[:3].upper()}]"
                 dc_copy["region"] = f"{c_name}, {country} {alias_tag}"
                 dc_copy["alias"] = "Riot Direct"
-                dc_copy["subnets"] = list(dc.get("subnets", []))
                 dc_copy["fn_sub"] = ""
             elif flavor == "valve_sdr":
                 alias_tag = f"[Valve SDR {c_name[:3].lower()}]"
                 dc_copy["region"] = f"{c_name}, {country} {alias_tag}"
                 dc_copy["alias"] = "Valve SDR"
-                dc_copy["subnets"] = list(dc.get("subnets", []))
                 dc_copy["fn_sub"] = ""
             elif flavor == "demonware":
                 alias_tag = f"[Demonware {c_name[:3].upper()}]"
                 dc_copy["region"] = f"{c_name}, {country} {alias_tag}"
                 dc_copy["alias"] = "Demonware"
-                dc_copy["subnets"] = ["24.105.30.0/24", "24.105.62.0/24", "185.34.107.0/24"]
                 dc_copy["fn_sub"] = ""
             elif flavor == "blizzard":
                 alias_tag = f"[Blizzard BNet {c_name[:3].upper()}]"
                 dc_copy["region"] = f"{c_name}, {country} {alias_tag}"
                 dc_copy["alias"] = "Blizzard BNet"
-                dc_copy["subnets"] = ["24.105.30.0/24", "24.105.62.0/24", "137.221.105.0/24", "37.244.28.0/24"]
                 dc_copy["fn_sub"] = ""
             elif flavor == "ea":
                 alias_tag = f"[EA Multiplay {c_name[:3].upper()}]"
                 dc_copy["region"] = f"{c_name}, {country} {alias_tag}"
                 dc_copy["alias"] = "EA Multiplay"
-                dc_copy["subnets"] = ["159.153.64.0/24", "159.153.92.0/24", "52.94.0.0/24"]
                 dc_copy["fn_sub"] = ""
             elif flavor == "netease":
                 alias_tag = f"[NetEase Messiah {c_name[:3].upper()}]"
                 dc_copy["region"] = f"{c_name}, {country} {alias_tag}"
                 dc_copy["alias"] = "NetEase Messiah"
-                dc_copy["subnets"] = ["52.94.0.0/24", "104.160.131.0/24", "13.107.42.0/24"]
                 dc_copy["fn_sub"] = ""
             elif flavor == "roblox":
                 alias_tag = f"[Roblox Edge {c_name[:3].upper()}]"
                 dc_copy["region"] = f"{c_name}, {country} {alias_tag}"
                 dc_copy["alias"] = "Roblox Edge"
-                dc_copy["subnets"] = ["128.116.0.0/24", "128.116.1.0/24", "128.116.115.0/24"]
                 dc_copy["fn_sub"] = ""
             elif flavor == "cipsoft":
                 alias_tag = f"[Cloudflare Spectrum {c_name[:3].upper()}]"
                 dc_copy["region"] = f"{c_name}, {country} {alias_tag}"
                 dc_copy["alias"] = "Cloudflare Spectrum"
-                dc_copy["subnets"] = ["172.65.208.0/24", "172.65.224.0/24", "52.95.164.0/24"]
                 dc_copy["fn_sub"] = ""
             elif flavor == "minecraft":
                 alias_tag = f"[Hypixel Relay {c_name[:3].upper()}]"
                 dc_copy["region"] = f"{c_name}, {country} {alias_tag}"
                 dc_copy["alias"] = "Hypixel Anycast"
-                dc_copy["subnets"] = ["172.65.192.0/24", "172.65.208.0/24"]
                 dc_copy["fn_sub"] = ""
             elif flavor == "cfx":
                 alias_tag = f"[Cfx.re Relay {c_name[:3].upper()}]"
                 dc_copy["region"] = f"{c_name}, {country} {alias_tag}"
                 dc_copy["alias"] = "Cfx.re Relay"
-                dc_copy["subnets"] = ["185.56.65.0/24", "192.81.241.0/24"]
                 dc_copy["fn_sub"] = ""
             elif flavor == "battlestate":
                 alias_tag = f"[Battlestate Cloud {c_name[:3].upper()}]"
                 dc_copy["region"] = f"{c_name}, {country} {alias_tag}"
                 dc_copy["alias"] = "Battlestate Cloud"
-                dc_copy["subnets"] = ["92.223.0.0/24", "52.94.0.0/24"]
                 dc_copy["fn_sub"] = ""
             elif flavor == "facepunch":
                 alias_tag = f"[Facepunch SDR {c_name[:3].upper()}]"
                 dc_copy["region"] = f"{c_name}, {country} {alias_tag}"
                 dc_copy["alias"] = "Facepunch SDR"
-                dc_copy["subnets"] = ["162.254.192.0/24", "104.160.131.0/24"]
                 dc_copy["fn_sub"] = ""
             elif flavor == "ubisoft":
                 alias_tag = f"[Ubisoft PlayFab {c_name[:3].upper()}]"
                 dc_copy["region"] = f"{c_name}, {country} {alias_tag}"
                 dc_copy["alias"] = "Ubisoft PlayFab"
-                dc_copy["subnets"] = ["52.94.0.0/24", "13.107.42.0/24"]
                 dc_copy["fn_sub"] = ""
             elif flavor == "amazon_games":
                 alias_tag = f"[AWS GameLift {c_name[:3].upper()}]"
                 dc_copy["region"] = f"{c_name}, {country} {alias_tag}"
                 dc_copy["alias"] = "AWS GameLift"
-                dc_copy["subnets"] = ["52.94.0.0/24", "52.94.24.0/24"]
                 dc_copy["fn_sub"] = ""
             else:
                 alias_tag = f"[{title} Relay {c_name[:3].upper()}]"
                 dc_copy["region"] = f"{c_name}, {country} {alias_tag}"
                 dc_copy["alias"] = f"{title} Relay"
-                dc_copy["subnets"] = subnets if subnets else [f"{dc['ip'].rsplit('.', 1)[0]}.0/24"]
                 dc_copy["fn_sub"] = ""
 
             cached = self.cached_dc_pings.get(dc["dcId"])
