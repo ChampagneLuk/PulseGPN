@@ -3451,6 +3451,7 @@ class PulseGpnApp:
         self.root = root
         self.root.title("PulseGPN Pro v1.0 // Gamer Private Network & Low-Latency Kernel Telemetry")
         self.root.geometry("1340x820")
+        self.root.minsize(1050, 600)
         self.root.configure(bg="#0d1117")
 
         self.core = core if core is not None else PulseGpnCore(self.append_log)
@@ -3533,64 +3534,65 @@ class PulseGpnApp:
         top_bar.pack(fill="x", side="top")
         top_bar.pack_propagate(False)
 
-        brand_lbl = tk.Label(top_bar, text="⚡ PULSEGPN", bg="#161b22", fg="#ff2247", font=("Segoe UI Black", 15, "bold"))
-        brand_lbl.pack(side="left", padx=(16, 4))
-        sub_brand = tk.Label(top_bar, text="PRO v1.0 // GPN KERNEL ENGINE & DYNAMIC ROUTE ISOLATION", bg="#161b22", fg="#8b949e", font=("Consolas", 9, "bold"))
-        sub_brand.pack(side="left", padx=4)
+        brand_lbl = tk.Label(top_bar, text="⚡ PULSEGPN", bg="#161b22", fg="#ff2247", font=("Segoe UI Black", 14, "bold"))
+        brand_lbl.pack(side="left", padx=(14, 2))
+        sub_brand = tk.Label(top_bar, text="PRO v1.0", bg="#161b22", fg="#8b949e", font=("Consolas", 9, "bold"))
+        sub_brand.pack(side="left", padx=2)
 
-        self.hdr_pill = tk.Label(
-            top_bar, text="● MULTIPATH ROUTING ACTIVE", bg="#0d2818", fg="#10b981",
-            font=("Segoe UI", 9, "bold"), padx=12, pady=4
+        # Pack right-anchored items FIRST so latency & tray are NEVER clipped when window shrinks
+        tray_btn = tk.Button(
+            top_bar, text="📥 TRAY",
+            bg="#21262d", fg="#8b949e",
+            activebackground="#30363d", activeforeground="#ffffff",
+            font=("Segoe UI", 8, "bold"),
+            bd=1, relief="solid", highlightthickness=0,
+            padx=7, pady=2, cursor="hand2",
+            command=self.minimize_to_tray
         )
-        self.hdr_pill.pack(side="left", padx=14)
+        tray_btn.pack(side="right", padx=(2, 12))
 
-        if self.core.system_telemetry_active:
-            pill_text = f"● GPN EXTERNO ACTIVO (PID: {self.core.system_telemetry_pid})"
-            pill_bg = "#0d2818"
-            pill_fg = "#10b981"
-        else:
-            pill_text = "● PULSEGPN ENGINE ACTIVE"
-            pill_bg = "#0d2238"
-            pill_fg = "#38bdf8"
-
-        self.engine_status_pill = tk.Label(
-            top_bar, text=pill_text, bg=pill_bg, fg=pill_fg,
-            font=("Segoe UI", 9, "bold"), padx=10, pady=4
+        self.live_ping_badge = tk.Label(
+            top_bar, text="LATENCY: 56.0 ms", bg="#21262d", fg="#38bdf8",
+            font=("Consolas", 10, "bold"), padx=10, pady=3
         )
-        self.engine_status_pill.pack(side="left", padx=6)
+        self.live_ping_badge.pack(side="right", padx=4)
+
+        man_top_chk = tk.Checkbutton(
+            top_bar, text="☑ MANUAL",
+            variable=self.manual_mode_var, command=self._on_toggle_manual_mode,
+            bg="#161b22", fg="#f59e0b", selectcolor="#0d1117",
+            activebackground="#161b22", activeforeground="#f59e0b", font=("Segoe UI", 8, "bold")
+        )
+        man_top_chk.pack(side="right", padx=4)
 
         ap_chk = tk.Checkbutton(
             top_bar, text="AUTO-PILOT",
             variable=self.autopilot_var, command=self._on_toggle_autopilot_mode,
             bg="#161b22", fg="#38bdf8", selectcolor="#0d1117",
-            activebackground="#161b22", activeforeground="#38bdf8", font=("Segoe UI", 9, "bold")
+            activebackground="#161b22", activeforeground="#38bdf8", font=("Segoe UI", 8, "bold")
         )
-        ap_chk.pack(side="left", padx=6)
+        ap_chk.pack(side="right", padx=4)
 
-        man_top_chk = tk.Checkbutton(
-            top_bar, text="☑ MANUAL ROUTING",
-            variable=self.manual_mode_var, command=self._on_toggle_manual_mode,
-            bg="#161b22", fg="#f59e0b", selectcolor="#0d1117",
-            activebackground="#161b22", activeforeground="#f59e0b", font=("Segoe UI", 9, "bold")
-        )
-        man_top_chk.pack(side="left", padx=6)
+        if self.core.system_telemetry_active:
+            pill_text = f"● GPN EXTERNO (PID: {self.core.system_telemetry_pid})"
+            pill_bg = "#0d2818"
+            pill_fg = "#10b981"
+        else:
+            pill_text = "● ENGINE ACTIVE"
+            pill_bg = "#0d2238"
+            pill_fg = "#38bdf8"
 
-        self.live_ping_badge = tk.Label(
-            top_bar, text="CURRENT LATENCY: 56.0 ms", bg="#21262d", fg="#38bdf8",
-            font=("Consolas", 11, "bold"), padx=12, pady=4
+        self.engine_status_pill = tk.Label(
+            top_bar, text=pill_text, bg=pill_bg, fg=pill_fg,
+            font=("Segoe UI", 8, "bold"), padx=8, pady=3
         )
-        self.live_ping_badge.pack(side="right", padx=(8, 16))
+        self.engine_status_pill.pack(side="right", padx=4)
 
-        tray_btn = tk.Button(
-            top_bar, text="📥 TRAY",
-            bg="#21262d", fg="#8b949e",
-            activebackground="#30363d", activeforeground="#ffffff",
-            font=("Segoe UI", 9, "bold"),
-            bd=1, relief="solid", highlightthickness=0,
-            padx=8, pady=3, cursor="hand2",
-            command=self.minimize_to_tray
+        self.hdr_pill = tk.Label(
+            top_bar, text="● MULTIPATH ROUTING ACTIVE", bg="#0d2818", fg="#10b981",
+            font=("Segoe UI", 8, "bold"), padx=10, pady=3
         )
-        tray_btn.pack(side="right", padx=(0, 4))
+        self.hdr_pill.pack(side="left", padx=8)
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_window_close)
         self.root.bind("<Unmap>", self._on_window_unmap)
@@ -3620,18 +3622,18 @@ class PulseGpnApp:
             b.pack(fill="x", padx=10, pady=3)
             self.nav_btns[key] = b
 
-        tk.Frame(nav_bar, bg="#21262d", height=1).pack(fill="x", padx=12, pady=12)
-        tk.Label(nav_bar, text="QUICK ACTIONS", bg="#161b22", fg="#484f58", font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=14, pady=(0, 6))
-        ttk.Button(nav_bar, text="🚀 LAUNCH ACTIVE GAME", style="Red.TButton", command=self.run_launch_active_game).pack(fill="x", padx=12, pady=4)
-        ttk.Button(nav_bar, text="🧹 PURGE RAM CACHE", style="Cyan.TButton", command=self.run_ram_cleaner).pack(fill="x", padx=12, pady=4)
-        ttk.Button(nav_bar, text="⚡ FLUSH & TUNE DNS", style="Cyan.TButton", command=self.run_dns_optimizer).pack(fill="x", padx=12, pady=4)
-        ttk.Button(nav_bar, text="⏹ STOP ALL ROUTES", style="Red.TButton", command=self.stop_all_routes_ui).pack(fill="x", padx=12, pady=4)
+        tk.Frame(nav_bar, bg="#21262d", height=1).pack(fill="x", padx=10, pady=6)
+        tk.Label(nav_bar, text="QUICK ACTIONS", bg="#161b22", fg="#484f58", font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=12, pady=(0, 4))
+        ttk.Button(nav_bar, text="🚀 LAUNCH ACTIVE GAME", style="Red.TButton", command=self.run_launch_active_game).pack(fill="x", padx=10, pady=2)
+        ttk.Button(nav_bar, text="🧹 PURGE RAM CACHE", style="Cyan.TButton", command=self.run_ram_cleaner).pack(fill="x", padx=10, pady=2)
+        ttk.Button(nav_bar, text="⚡ FLUSH & TUNE DNS", style="Cyan.TButton", command=self.run_dns_optimizer).pack(fill="x", padx=10, pady=2)
+        ttk.Button(nav_bar, text="⏹ STOP ALL ROUTES", style="Red.TButton", command=self.stop_all_routes_ui).pack(fill="x", padx=10, pady=2)
 
         self.if_side_lbl = tk.Label(
-            nav_bar, text="Active Adapter:\nDetecting...", bg="#161b22", fg="#8b949e",
-            font=("Consolas", 8), justify="left", wraplength=170
+            nav_bar, text="Active Adapter: Detecting...", bg="#161b22", fg="#8b949e",
+            font=("Consolas", 7), justify="left", wraplength=175
         )
-        self.if_side_lbl.pack(side="bottom", anchor="w", padx=12, pady=12)
+        self.if_side_lbl.pack(side="bottom", anchor="w", padx=10, pady=(2, 6))
 
         self.pages_container = ttk.Frame(body)
         self.pages_container.pack(side="left", fill="both", expand=True)
@@ -3651,11 +3653,11 @@ class PulseGpnApp:
         self._build_page_multi_internet(self.pages["multi_internet"])
         self._build_page_tools(self.pages["tools"])
 
-        # Bottom Real-Time Console Bar
+        # Bottom Real-Time Console Bar (Compact & Space-Saving)
         log_frame = ttk.Frame(self.root, style="Card.TFrame")
-        log_frame.pack(fill="x", side="bottom", padx=10, pady=(0, 8))
-        self.log_box = tk.Text(log_frame, height=4, bg="#07090d", fg="#38bdf8", font=("Consolas", 8), relief="flat", highlightthickness=0)
-        self.log_box.pack(fill="x", padx=8, pady=4)
+        log_frame.pack(fill="x", side="bottom", padx=10, pady=(0, 4))
+        self.log_box = tk.Text(log_frame, height=3, bg="#07090d", fg="#38bdf8", font=("Consolas", 8), relief="flat", highlightthickness=0)
+        self.log_box.pack(fill="x", padx=6, pady=2)
 
         # Default Startup View: MY GAMES (Main Menu / Dashboard)
         self.switch_page("my_games")
@@ -4271,41 +4273,42 @@ class PulseGpnApp:
         self.active_game_exe_lbl = tk.Label(tuner_title_f, text="FortniteClient-Win64-Shipping.exe  |  UDP 9000-15999", bg="#161b22", fg="#38bdf8", font=("Consolas", 8), anchor="w")
         self.active_game_exe_lbl.pack(fill="x")
 
-        self.browse_exe_top_btn = tk.Button(
-            top_nav_bar, text="📁 CAMBIAR RUTA .EXE", bg="#21262d", fg="#38bdf8",
-            activebackground="#30363d", activeforeground="#ffffff",
-            font=("Segoe UI", 8, "bold"), bd=1, relief="solid", highlightthickness=0,
-            padx=8, pady=3, cursor="hand2", command=self.browse_and_set_game_executable
+        # Right-anchored status pills packed FIRST so they never get clipped
+        self.tuner_status_pill = tk.Label(
+            top_nav_bar, text="● ROUTE ACTIVE", bg="#0d2818", fg="#10b981",
+            font=("Segoe UI", 8, "bold"), padx=8, pady=3
         )
-        self.browse_exe_top_btn.pack(side="left", padx=8)
-
-        self.exitlag_tweak_btn = tk.Button(
-            top_nav_bar, text="⚡ EXITLAG ULTRA-PING ENGINE", bg="#1a1e24", fg="#f59e0b",
-            activebackground="#30363d", activeforeground="#ffffff",
-            font=("Segoe UI", 8, "bold"), bd=1, relief="solid", highlightthickness=0,
-            padx=8, pady=3, cursor="hand2", command=self.run_exitlag_ping_stack_ui
-        )
-        self.exitlag_tweak_btn.pack(side="left", padx=4)
-
-        self.top_timer_res_btn = tk.Button(
-            top_nav_bar, text="⏱ TIMER: MANUAL", bg="#1a1e24", fg="#38bdf8",
-            activebackground="#30363d", activeforeground="#ffffff",
-            font=("Segoe UI", 8, "bold"), bd=1, relief="solid", highlightthickness=0,
-            padx=8, pady=3, cursor="hand2", command=self.open_timer_resolution_dialog
-        )
-        self.top_timer_res_btn.pack(side="left", padx=4)
+        self.tuner_status_pill.pack(side="right", padx=3)
 
         self.watchdog_status_pill = tk.Label(
-            top_nav_bar, text="● EXITLAG SYNC: AUTO", bg="#0d2818", fg="#10b981",
-            font=("Segoe UI", 8, "bold"), padx=8, pady=4
+            top_nav_bar, text="● SYNC: AUTO", bg="#0d2818", fg="#10b981",
+            font=("Segoe UI", 8, "bold"), padx=8, pady=3
         )
-        self.watchdog_status_pill.pack(side="right", padx=4)
+        self.watchdog_status_pill.pack(side="right", padx=3)
 
-        self.tuner_status_pill = tk.Label(
-            top_nav_bar, text="● OPTIMIZED ROUTE ACTIVE", bg="#0d2818", fg="#10b981",
-            font=("Segoe UI", 9, "bold"), padx=10, pady=4
+        self.browse_exe_top_btn = tk.Button(
+            top_nav_bar, text="📁 RUTA .EXE", bg="#21262d", fg="#38bdf8",
+            activebackground="#30363d", activeforeground="#ffffff",
+            font=("Segoe UI", 8, "bold"), bd=1, relief="solid", highlightthickness=0,
+            padx=6, pady=2, cursor="hand2", command=self.browse_and_set_game_executable
         )
-        self.tuner_status_pill.pack(side="right", padx=4)
+        self.browse_exe_top_btn.pack(side="left", padx=4)
+
+        self.exitlag_tweak_btn = tk.Button(
+            top_nav_bar, text="⚡ EXITLAG STACK", bg="#1a1e24", fg="#f59e0b",
+            activebackground="#30363d", activeforeground="#ffffff",
+            font=("Segoe UI", 8, "bold"), bd=1, relief="solid", highlightthickness=0,
+            padx=6, pady=2, cursor="hand2", command=self.run_exitlag_ping_stack_ui
+        )
+        self.exitlag_tweak_btn.pack(side="left", padx=3)
+
+        self.top_timer_res_btn = tk.Button(
+            top_nav_bar, text="⏱ TIMER", bg="#1a1e24", fg="#38bdf8",
+            activebackground="#30363d", activeforeground="#ffffff",
+            font=("Segoe UI", 8, "bold"), bd=1, relief="solid", highlightthickness=0,
+            padx=6, pady=2, cursor="hand2", command=self.open_timer_resolution_dialog
+        )
+        self.top_timer_res_btn.pack(side="left", padx=3)
 
         # Split: Left Settings Column (Width 360) + Right Telemetry & Matrix Column
         content_f = ttk.Frame(parent)
@@ -4315,33 +4318,59 @@ class PulseGpnApp:
         left_col.pack(side="left", fill="y", padx=(0, 8))
         left_col.pack_propagate(False)
 
+        # 1. Pinned Bottom Action Controls (PACKED FIRST TO REMAIN VISIBLE AT ALL TIMES)
+        btn_row = ttk.Frame(left_col, style="Card.TFrame")
+        btn_row.pack(side="bottom", fill="x", padx=10, pady=(2, 6))
+        ttk.Button(btn_row, text="🔄 RE-PROBE PING", style="Cyan.TButton", command=self.run_reprobe_all_routes_ui).pack(side="left", expand=True, fill="x", padx=(0, 2))
+        ttk.Button(btn_row, text="🎯 APPLY CHECKBOX", style="Red.TButton", command=self.apply_checked_routes_now).pack(side="left", expand=True, fill="x", padx=(2, 0))
+
+        # Routes Count Grid & Process Entry
+        routes_grid = ttk.Frame(left_col, style="Card.TFrame")
+        routes_grid.pack(side="bottom", fill="x", padx=10, pady=(1, 3))
+
+        r_col1 = ttk.Frame(routes_grid, style="Card.TFrame")
+        r_col1.pack(side="left", expand=True, fill="x", padx=(0, 2))
+        ttk.Label(r_col1, text="UDP:", style="Sub.TLabel").pack(anchor="w")
+        ttk.Combobox(r_col1, textvariable=self.udp_routes_var, values=["1", "2", "3", "4"], state="readonly", width=3).pack(fill="x", pady=1)
+
+        r_col2 = ttk.Frame(routes_grid, style="Card.TFrame")
+        r_col2.pack(side="left", expand=True, fill="x", padx=2)
+        ttk.Label(r_col2, text="TCP:", style="Sub.TLabel").pack(anchor="w")
+        ttk.Combobox(r_col2, textvariable=self.tcp_routes_var, values=["0", "1", "2", "4"], state="readonly", width=3).pack(fill="x", pady=1)
+
+        r_col3 = ttk.Frame(routes_grid, style="Card.TFrame")
+        r_col3.pack(side="left", expand=True, fill="x", padx=(2, 0))
+        ttk.Label(r_col3, text="Process:", style="Sub.TLabel").pack(anchor="w")
+        tk.Entry(r_col3, textvariable=self.exe_var, bg="#0d1117", fg="#38bdf8", relief="flat", font=("Consolas", 8), width=12).pack(fill="x", ipady=2, pady=1)
+
+        # 2. Top Controls
         self.apply_toggle_btn = tk.Button(
             left_col, text="● ROUTES ACTIVATED (MULTIPATH ON)", bg="#ff2247", fg="#ffffff",
             activebackground="#e11d48", activeforeground="#ffffff", relief="flat",
-            font=("Segoe UI", 9, "bold"), pady=7, command=self.toggle_apply_routes
+            font=("Segoe UI", 9, "bold"), pady=5, command=self.toggle_apply_routes
         )
-        self.apply_toggle_btn.pack(fill="x", padx=12, pady=(10, 4))
+        self.apply_toggle_btn.pack(side="top", fill="x", padx=10, pady=(6, 2))
 
         # Executable & Firewall ALE Binding Box
-        exe_box = tk.Frame(left_col, bg="#21262d", padx=10, pady=8, highlightthickness=1, highlightbackground="#30363d")
-        exe_box.pack(fill="x", padx=12, pady=(4, 6))
+        exe_box = tk.Frame(left_col, bg="#21262d", padx=8, pady=4, highlightthickness=1, highlightbackground="#30363d")
+        exe_box.pack(side="top", fill="x", padx=10, pady=2)
 
         tk.Label(exe_box, text="EJECUTABLE & REGLAS DE FIREWALL", bg="#21262d", fg="#ffffff", font=("Segoe UI", 8, "bold")).pack(anchor="w")
 
         self.tuner_exe_path_lbl = tk.Label(
             exe_box, text="Ruta: Auto-detectando...", bg="#21262d", fg="#8b949e",
-            font=("Consolas", 8), anchor="w", wraplength=330, justify="left"
+            font=("Consolas", 7), anchor="w", wraplength=330, justify="left"
         )
-        self.tuner_exe_path_lbl.pack(fill="x", pady=(2, 4))
+        self.tuner_exe_path_lbl.pack(fill="x", pady=(1, 2))
 
         exe_btn_f = tk.Frame(exe_box, bg="#21262d")
         exe_btn_f.pack(fill="x")
         ttk.Button(exe_btn_f, text="📁 EXAMINAR .EXE", style="Cyan.TButton", command=self.browse_and_set_game_executable).pack(side="left", expand=True, fill="x", padx=(0, 2))
         ttk.Button(exe_btn_f, text="🔄 AUTO-DETECTAR", style="Dark.TButton", command=self.auto_detect_current_game_binary).pack(side="left", padx=(2, 0))
 
-        # Mode Checkboxes
-        mode_box = tk.Frame(left_col, bg="#21262d", padx=10, pady=8, highlightthickness=1, highlightbackground="#30363d")
-        mode_box.pack(fill="x", padx=12, pady=4)
+        # Mode Checkboxes (Compact layout)
+        mode_box = tk.Frame(left_col, bg="#21262d", padx=8, pady=4, highlightthickness=1, highlightbackground="#30363d")
+        mode_box.pack(side="top", fill="x", padx=10, pady=2)
 
         tk.Checkbutton(
             mode_box, text="☑ MANUAL ROUTING (Checkbox Mode)",
@@ -4351,29 +4380,29 @@ class PulseGpnApp:
         ).pack(fill="x")
 
         self.fn_subregion_lock_cb = tk.Checkbutton(
-            mode_box, text="🔒 Enforce Subregion Matchmaking (Quarantine Any)",
+            mode_box, text="🔒 Enforce Subregion Matchmaking",
             variable=self.fn_subregion_lock_var, command=self._on_fn_lock_toggle,
             bg="#21262d", fg="#10b981", selectcolor="#0d1117",
             activebackground="#21262d", activeforeground="#10b981", font=("Segoe UI", 8, "bold"), anchor="w"
         )
-        self.fn_subregion_lock_cb.pack(fill="x", pady=(2, 0))
+        self.fn_subregion_lock_cb.pack(fill="x", pady=(1, 0))
 
         tk.Checkbutton(
-            mode_box, text="⚡ Enable Multipath Route Bonding (Primary + Backups)",
+            mode_box, text="⚡ Enable Multipath Route Bonding",
             variable=self.multi_chk_var,
             bg="#21262d", fg="#38bdf8", selectcolor="#0d1117",
             activebackground="#21262d", activeforeground="#38bdf8", font=("Segoe UI", 8), anchor="w"
-        ).pack(fill="x", pady=(2, 0))
+        ).pack(fill="x", pady=(1, 0))
 
         tk.Checkbutton(
-            mode_box, text="⚡ ExitLag Server Hot-Swap (Live Zero-Restart Handoff)",
+            mode_box, text="⚡ ExitLag Server Hot-Swap (Live Handoff)",
             variable=self.hotswap_enabled_var,
             bg="#21262d", fg="#a855f7", selectcolor="#0d1117",
             activebackground="#21262d", activeforeground="#c084fc", font=("Segoe UI", 8, "bold"), anchor="w"
-        ).pack(fill="x", pady=(2, 0))
+        ).pack(fill="x", pady=(1, 0))
 
         # Region Filter Combobox
-        ttk.Label(left_col, text="FILTER CONTINENT / REGION:", style="Sub.TLabel").pack(anchor="w", padx=12, pady=(6, 1))
+        ttk.Label(left_col, text="FILTER CONTINENT / REGION:", style="Sub.TLabel").pack(side="top", anchor="w", padx=10, pady=(3, 1))
         cont_cb = ttk.Combobox(
             left_col, textvariable=self.cont_var,
             values=[
@@ -4387,12 +4416,12 @@ class PulseGpnApp:
             ],
             state="readonly"
         )
-        cont_cb.pack(fill="x", padx=12, pady=2)
+        cont_cb.pack(side="top", fill="x", padx=10, pady=1)
         cont_cb.bind("<<ComboboxSelected>>", lambda e: self._on_continent_filter_change())
 
-        # Scrollable Checkbox List for Datacenters
+        # Scrollable Checkbox List for Datacenters Header
         chk_hdr_f = tk.Frame(left_col, bg="#161b22")
-        chk_hdr_f.pack(fill="x", padx=12, pady=(8, 2))
+        chk_hdr_f.pack(side="top", fill="x", padx=10, pady=(3, 1))
         ttk.Label(chk_hdr_f, text="☑ SELECT ROUTE (CLICK TO LOCK):", style="CardTitle.TLabel").pack(side="left")
 
         self.sort_ping_btn = tk.Button(
@@ -4402,13 +4431,14 @@ class PulseGpnApp:
             activebackground="#161b22", activeforeground="#ffffff",
             font=("Consolas", 8, "bold"),
             bd=1, relief="solid", highlightthickness=0,
-            padx=6, pady=1, cursor="hand2",
+            padx=5, pady=1, cursor="hand2",
             command=self.toggle_ping_sort_order
         )
         self.sort_ping_btn.pack(side="right")
 
+        # 3. Middle Dynamic Expanding Container for Checkboxes
         chk_container = tk.Frame(left_col, bg="#0d1117", highlightthickness=1, highlightbackground="#30363d")
-        chk_container.pack(fill="both", expand=True, padx=12, pady=2)
+        chk_container.pack(side="top", fill="both", expand=True, padx=10, pady=2)
 
         self.chk_canvas = tk.Canvas(chk_container, bg="#0d1117", highlightthickness=0, width=310)
         chk_sb = ttk.Scrollbar(chk_container, orient="vertical", command=self.chk_canvas.yview)
@@ -4422,30 +4452,6 @@ class PulseGpnApp:
         self.chk_canvas.configure(yscrollcommand=chk_sb.set)
         self.chk_canvas.pack(side="left", fill="both", expand=True)
         chk_sb.pack(side="right", fill="y")
-
-        # Routes Count Grid & Process Entry
-        routes_grid = ttk.Frame(left_col, style="Card.TFrame")
-        routes_grid.pack(fill="x", padx=12, pady=4)
-
-        r_col1 = ttk.Frame(routes_grid, style="Card.TFrame")
-        r_col1.pack(side="left", expand=True, fill="x", padx=(0, 4))
-        ttk.Label(r_col1, text="UDP Routes:", style="Sub.TLabel").pack(anchor="w")
-        ttk.Combobox(r_col1, textvariable=self.udp_routes_var, values=["1", "2", "3", "4"], state="readonly", width=4).pack(fill="x", pady=1)
-
-        r_col2 = ttk.Frame(routes_grid, style="Card.TFrame")
-        r_col2.pack(side="left", expand=True, fill="x", padx=4)
-        ttk.Label(r_col2, text="TCP Routes:", style="Sub.TLabel").pack(anchor="w")
-        ttk.Combobox(r_col2, textvariable=self.tcp_routes_var, values=["0", "1", "2", "4"], state="readonly", width=4).pack(fill="x", pady=1)
-
-        r_col3 = ttk.Frame(routes_grid, style="Card.TFrame")
-        r_col3.pack(side="left", expand=True, fill="x", padx=(4, 0))
-        ttk.Label(r_col3, text="Process (.exe):", style="Sub.TLabel").pack(anchor="w")
-        tk.Entry(r_col3, textvariable=self.exe_var, bg="#0d1117", fg="#38bdf8", relief="flat", font=("Consolas", 8), width=14).pack(fill="x", ipady=3, pady=1)
-
-        btn_row = ttk.Frame(left_col, style="Card.TFrame")
-        btn_row.pack(fill="x", padx=12, pady=(4, 8))
-        ttk.Button(btn_row, text="🔄 RE-PROBE PING", style="Cyan.TButton", command=self.run_reprobe_all_routes_ui).pack(side="left", expand=True, fill="x", padx=(0, 3))
-        ttk.Button(btn_row, text="🎯 APPLY CHECKBOX", style="Red.TButton", command=self.apply_checked_routes_now).pack(side="left", expand=True, fill="x", padx=(3, 0))
 
         # Right Column: Live Telemetry Canvas + 35 Routes Matrix
         right_col = ttk.Frame(content_f, style="Card.TFrame")
